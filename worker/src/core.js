@@ -20,7 +20,7 @@ const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo 
 const ALERT_EVERY_MINUTES = 60;
 const MAX_PHOTOS_PER_POST = 10;
 // Tried in this order (all available on the free key, Oct 2026). Busy or missing ones are skipped.
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite",
+const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite",
   "gemini-flash-lite-latest"];
 const CAPTION_RETRIES = 5;           // if Gemini is busy, try again this many times...
 const CAPTION_RETRY_MINUTES = 3;     // ...this many minutes apart, before using a ready-made caption
@@ -396,7 +396,7 @@ export class BotCore {
         try {
           const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
             { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
-              signal: AbortSignal.timeout(60000) });
+              signal: AbortSignal.timeout(45000) });
           if (!res.ok) {
             console.log(`Gemini ${model} failed: ${res.status} ${(await res.text()).slice(0, 150)}`);
             if (res.status === 429 || res.status >= 500) busy = true;
