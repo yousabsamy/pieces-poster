@@ -1,0 +1,49 @@
+name: Post jewelry pieces
+
+on:
+  schedule:
+    # Every 15 minutes: read the photos sent to the Telegram bot, post at 4 PM / 9 PM Cairo,
+    # and send the "not enough pieces" alert. bot.py decides what to do each time.
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:       # "Run workflow" button = check Telegram right now
+
+permissions:
+  contents: write          # needed to save queue.enc (the queue of pieces)
+
+concurrency: post-pieces
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r requirements.txt
+
+      - name: Read Telegram, post, alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
+          QUEUE_KEY: ${{ secrets.QUEUE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+        run: python bot.py
+
+      - name: Save the queue
+        if: always()       # save even if something failed, so a post is never repeated
+        run: |
+          if [ -n "$(git status --porcelain queue.enc)" ]; then
+            git config user.name "pieces-bot"
+            git config user.email "pieces-bot@users.noreply.github.com"
+            git add queue.enc
+            git commit -m "Update queue"
+            git pull --rebase
+            git push
+          fi
