@@ -198,6 +198,7 @@ const ARABIC_COMMANDS = [
   [/^(الغي|الغاء|الغي الصور|كنسل)$/, () => "/cancel"],
   [/^(مساعده|ساعدني|الاوامر|ابدا|القائمه الرئيسيه)$/, () => "/help"],
   [/^(امسح الكل|امسح كل البوستات|امسح كل حاجه|ابدا من الاول)$/, () => "/reset"],
+  [/^(اختبر الفيسبوك|جرب الفيسبوك|تيست فيسبوك)$/, () => "/fbtest"],
   [/^(امسح|احذف|شيل)( البوست)?( رقم)? (\d+)$/, (m) => `/delete ${m[4]}`],
   [/^(كلام جديد|كلام تاني|اكتب تاني|غير الكلام)( للبوست| البوست)?( رقم)?( (\d+))?$/, (m) => `/rewrite ${m[5] || ""}`],
   [/^(عدل|تعديل|عدل بجيميناي)( البوست)?( رقم)? (\d+)$/, (m) => `/guide ${m[4]}`],
@@ -980,6 +981,8 @@ export class BotCore {
         reply_markup: { inline_keyboard: [[{ text: "أيوه، امسح كل حاجة", callback_data: "reset:yes" }]] } });
     }
 
+    if (command === "/fbtest") return this.facebookTest(state, chat);
+
     if (command === "/guide") {
       const piece = find(rest);
       if (!piece) return this.send(chat, `مفيش بوست رقم ${rest}. دوس 📋 البوستات علشان تشوف الأرقام.`);
@@ -1032,6 +1035,29 @@ export class BotCore {
     }
 
     return this.send(chat, "مش فاهم ده 🙂 دوس ❓ مساعدة.");
+  }
+
+  async facebookTest(state, chat) {
+    // Checks the Facebook key without anyone seeing anything: reads the page name, uploads one HIDDEN photo
+    // (with the logo), then deletes it again.
+    if (!this.env.FB_PAGE_TOKEN) return this.send(chat, "🧪 لسه مفيش مفتاح فيسبوك، البوت في وضع التجربة.");
+    await this.send(chat, "⏳ بجرب الفيسبوك (صورة مخفية محدش هيشوفها وهتتمسح على طول)…");
+    const graph = `https://graph.facebook.com/${FB_API_VERSION}`;
+    const token = encodeURIComponent(this.env.FB_PAGE_TOKEN);
+    try {
+      const pageRes = await this.fetch(`${graph}/${this.env.FB_PAGE_ID}?fields=name&access_token=${token}`);
+      const page = await pageRes.json();
+      if (!pageRes.ok) throw new Error(page.error?.message || `page ${pageRes.status}`);
+      const piece = state.pieces[0];
+      const photo = piece ? (await this.postPhotos(piece))[0] : this.logo;      // no posts: test with the logo itself
+      const { id } = await this.facebook("photos", { published: "false" }, photo);
+      const del = await this.fetch(`${graph}/${id}?access_token=${token}`, { method: "DELETE" });
+      return this.send(chat, `✅ الفيسبوك شغال!\nالصفحة: ${page.name}\nرفعت صورة مخفية واتمسحت ${del.ok ? "✅" : "⚠️ (امسحها من الصفحة)"}\n` +
+        "البوستات هتتنشر على الصفحة في مواعيدها 🎉");
+    } catch (e) {
+      console.log(`Facebook test failed: ${e.message}`);
+      return this.send(chat, `❌ الفيسبوك مش شغال: ${e.message.slice(0, 300)}`);
+    }
   }
 
   // ---- Facebook ----

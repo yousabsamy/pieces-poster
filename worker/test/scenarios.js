@@ -44,6 +44,8 @@ function makeBot({ facebook = true, names = true } = {}) {
       return json({ candidates: [{ content: { parts: [{ text: answer }] } }] });
     }
     if (url.includes("graph.facebook.com")) {
+      if (!options.method || options.method === "GET") return json({ name: "مجوهرات السلام - Al-Salam Jewelry" });
+      if (options.method === "DELETE") return json({ success: true });
       const path = url.split("/").pop();
       if (w.fbFail || w.fbFailPath === path) return json({ error: "test" }, 500);
       const fields = Object.fromEntries([...options.body.entries()].filter(([k]) => k !== "source"));
@@ -856,6 +858,18 @@ await scenario("After moving, the 3 PM post is the moved one", async () => {
   w.at(15); await w.tick();
   assert.ok(w.fb[0].fields.caption);
   assert.deepEqual(w.pieces().map((p) => p.id), [1]);
+});
+
+await scenario("'اختبر الفيسبوك': hidden photo uploaded then deleted, page name shown; nothing in the queue changes", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.msg(OWNER, { text: "اختبر الفيسبوك" });
+  assert.ok(w.has(OWNER, "✅ الفيسبوك شغال"));
+  assert.equal(w.fb.at(-1).fields.published, "false");
+  assert.equal(w.pieces().length, 1);
+  const w2 = makeBot({ facebook: false });
+  await w2.msg(OWNER, { text: "اختبر الفيسبوك" });
+  assert.ok(w2.has(OWNER, "لسه مفيش مفتاح فيسبوك"));
 });
 
 // ---------------- Posting on time ----------------
