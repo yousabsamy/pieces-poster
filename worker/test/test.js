@@ -183,6 +183,16 @@ await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
 at(21, 5, 30); await bot.tick();
 assert.equal(previews.at(-1)[0], "sendDocument");
 
+// 9b. /reset only empties the queue after the confirm button.
+await tap(WORKER, 1);
+await msg(WORKER, { photo: "z1" });
+await msg(WORKER, { text: "/reset" });
+assert.ok(bot.state.pieces.length > 0);
+await bot.handleUpdate({ update_id: ++updateId, callback_query: {
+  id: "r", from: { id: WORKER }, data: "reset:yes", message: { message_id: 1, chat: { id: WORKER } } } });
+assert.equal(bot.state.pieces.length, 0);
+assert.equal(bot.state.next_id, 1);
+
 // 9. The saved queue survives a restart.
 const fresh = new BotCore(storage, env, fakeFetch, () => clock);
 await fresh.load();

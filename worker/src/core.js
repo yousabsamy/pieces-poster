@@ -359,7 +359,16 @@ export class BotCore {
     const chat = query.message?.chat?.id;
     const count = Number((query.data || "").split(":")[1]);
     await this.telegram("answerCallbackQuery", { callback_query_id: query.id }).catch(() => {});
-    if (!this.allowedUsers().includes(query.from.id) || !chat || !(count >= 1 && count <= MAX_PHOTOS_PER_POST)) return;
+    if (!this.allowedUsers().includes(query.from.id) || !chat) return;
+    if (query.data === "reset:yes") {
+      // Empty the queue and start again from piece number 1.
+      this.state = Object.assign(newState(), { day: state.day, posted_hours: state.posted_hours });
+      await this.save();
+      await this.telegram("editMessageText", { chat_id: chat, message_id: query.message.message_id,
+        text: "🗑 اتمسحت كل القطع. البوت بدأ من الأول." }).catch(() => {});
+      return this.askCount(chat);
+    }
+    if (!(count >= 1 && count <= MAX_PHOTOS_PER_POST)) return;
     state.open ||= { count: null, photos: [], files: [], note: "", from: query.from.id, asked: true };
     state.open.count = count;
     await this.save();
@@ -446,6 +455,12 @@ export class BotCore {
     if (command === "/start" || command === "/help") {
       await this.send(chat, HELP);
       return this.askCount(chat);
+    }
+
+    if (command === "/reset") {
+      return this.telegram("sendMessage", { chat_id: chat,
+        text: `⚠️ متأكد إنك عايز تمسح كل القطع اللي مستنية (${state.pieces.length} قطعة)؟`,
+        reply_markup: { inline_keyboard: [[{ text: "أيوه، امسح كل حاجة", callback_data: "reset:yes" }]] } });
     }
 
     if (command === "/cancel") {

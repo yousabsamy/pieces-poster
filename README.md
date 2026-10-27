@@ -13,7 +13,7 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 - If photos arrive before a number is chosen, the bot asks once and keeps them.
 - A few seconds later the bot answers with the day and time the piece goes out, and the caption.
 - Commands: `/list`, `/preview` (the next post exactly as it will look), `/delete 5`, `/caption 5 new text`,
-  `/cancel` (drop the photos still being collected).
+  `/cancel` (drop the photos still being collected), `/reset` (empty the whole queue, with a confirm button).
 
 ## Captions
 
