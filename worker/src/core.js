@@ -55,6 +55,16 @@ const STYLE_EXAMPLES = [
   "تألقي بلمسة من الذهب الخالص\nتصميمات تناسب كل الأذواق\nأناقة لا تحتاج إلى كلام\nقطعة صغيرة... وقيمة كبيرة",
 ];
 
+// Added under every caption (same lines as the gold price posts).
+export const CONTACT =
+  "📍 أول شارع البنك الزراعي – بجوار صيدلية عزمي – القناطر الخيرية\n" +
+  "📞 واتساب: 01012087660 – 01092091391";
+
+// The logo goes in the bottom-right corner of every photo (the owner chose "Option 1").
+const LOGO_WIDTH = 0.16;       // logo width, as a part of the photo's width
+const LOGO_MARGIN = 0.03;      // space from the edges, as a part of the photo's width
+const LOGO_OPACITY = 0.95;
+
 // Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
 const CHEERS = [
   "🌟 الله ينور يا {name}! 💪🔥",
@@ -188,7 +198,8 @@ function readyCaption(piece) {
 }
 
 export function fullCaption(piece) {
-  return piece.caption;     // Gemini writes the whole caption, sign-off line included
+  // Gemini writes the caption (sign-off line included); the contact lines are always added by this code.
+  return `${piece.caption}\n\n${CONTACT}`;
 }
 
 // ---------------- The bot ----------------
@@ -199,7 +210,8 @@ function newState() {
 
 export class BotCore {
   // storage: { get(key), put(key, value), setAlarm(ms) }. fetch and now() are passed in so tests can fake them.
-  constructor(storage, env, fetchFn = (...args) => fetch(...args), nowFn = Date.now) {
+  constructor(storage, env, fetchFn = (...args) => fetch(...args), nowFn = Date.now, logo = null) {
+    this.logo = logo;                // the logo PNG (bytes); null = no logo
     this.storage = storage;
     this.env = env;
     this.fetch = fetchFn;
@@ -267,27 +279,61 @@ export class BotCore {
     return new Uint8Array(await res.arrayBuffer());
   }
 
+  async addLogo(bytes) {
+    // Draws the logo in the bottom-right corner with Cloudflare Images. If anything fails, the photo goes out as it is.
+    const images = this.env.IMAGES;
+    if (!images || !this.logo) return bytes;
+    try {
+      const { width } = await images.info(new Response(bytes).body);
+      const logo = images.input(new Response(this.logo).body).transform({ width: Math.round(width * LOGO_WIDTH) });
+      const margin = Math.round(width * LOGO_MARGIN);
+      const result = await images.input(new Response(bytes).body)
+        .draw(logo, { bottom: margin, right: margin, opacity: LOGO_OPACITY })
+        .output({ format: "image/jpeg", quality: 92 });
+      return new Uint8Array(await result.response().arrayBuffer());
+    } catch (e) {
+      console.log(`Could not add the logo: ${e.message}`);
+      return bytes;
+    }
+  }
+
+  async postPhotos(piece) {
+    // The photos exactly as they go to Facebook: downloaded from Telegram, with the logo.
+    const images = await Promise.all(piece.photos.map((f) => this.downloadPhoto(f)));
+    return Promise.all(images.map((b) => this.addLogo(b)));
+  }
+
   async sendPreview(chat, piece, header) {
-    // Show a post on Telegram exactly as it will look on Facebook: the photos with the full caption.
+    // Show a post on Telegram exactly as it will look on Facebook: the photos with the logo and the full caption.
     await this.send(chat, header);
     const caption = fullCaption(piece).slice(0, 1024);
-    const files = piece.files || [];
-    const media = piece.photos.map((f) => ({ type: files.includes(f) ? "document" : "photo", media: f }));
     try {
-      if (media.length === 1) {
-        const type = media[0].type;
-        await this.telegram(type === "document" ? "sendDocument" : "sendPhoto",
-          { chat_id: chat, caption, [type]: media[0].media });
+      const photos = await this.postPhotos(piece);
+      const form = new FormData();
+      form.append("chat_id", String(chat));
+      if (photos.length === 1) {
+        form.append("caption", caption);
+        form.append("photo", new Blob([photos[0]], { type: "image/jpeg" }), "p0.jpg");
+        await this.telegramForm("sendPhoto", form);
       } else {
-        // Telegram can't mix photos and files in one album
-        if (new Set(media.map((m) => m.type)).size > 1) media.forEach((m) => { m.type = "document"; });
+        const media = photos.map((_, i) => ({ type: "photo", media: `attach://p${i}` }));
         media[0].caption = caption;
-        await this.telegram("sendMediaGroup", { chat_id: chat, media });
+        form.append("media", JSON.stringify(media));
+        photos.forEach((b, i) => form.append(`p${i}`, new Blob([b], { type: "image/jpeg" }), `p${i}.jpg`));
+        await this.telegramForm("sendMediaGroup", form);
       }
     } catch (e) {
       console.log(`Could not send a preview: ${e.message}`);
       await this.send(chat, caption);
     }
+  }
+
+  async telegramForm(method, form) {
+    const res = await this.fetch(`https://api.telegram.org/bot${this.env.TELEGRAM_BOT_TOKEN}/${method}`,
+      { method: "POST", body: form });
+    const data = await res.json();
+    if (!data.ok) throw new Error(`Telegram ${method} failed: ${data.description}`);
+    return data.result;
   }
 
   // ---- Captions ----
@@ -625,8 +671,8 @@ export class BotCore {
 
     let postId;
     try {
-      const images = await Promise.all(piece.photos.map((f) => this.downloadPhoto(f)));
-      if (!piece.caption) await this.writeCaption(piece, images);
+      const images = await this.postPhotos(piece);
+      if (!piece.caption) await this.writeCaption(piece);
       postId = await this.postToFacebook(images, fullCaption(piece));
     } catch (e) {
       console.log(`Posting piece ${piece.id} failed: ${e.message}`);

@@ -24,6 +24,13 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 - It's told not to repeat the last few captions, and never to write a price, weight or karat.
 - If Gemini doesn't work, a ready-made caption in the same style is used. A post is never skipped because of the caption.
 
+## Logo and contact info
+
+- Every photo gets the shop logo in the bottom-right corner (`assets/logo.png`, size and place at the top of
+  `core.js`). Cloudflare Images draws it, free up to 5,000 photos a month. If it ever fails, the photo goes out without it.
+- Every caption ends with the address and both WhatsApp numbers (`CONTACT` in `core.js`).
+- `/preview` and the 🧪 test posts show the photos with the logo, exactly as they'll be posted.
+
 ## Alerts
 
 From 1 PM to 11:30 PM, every 30 minutes, if there aren't enough pieces for the rest of today **and** all

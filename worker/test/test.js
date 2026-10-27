@@ -2,7 +2,7 @@
 // Run: npm test
 
 import assert from "node:assert/strict";
-import { BotCore, cairoTime, cleanCaption } from "../src/core.js";
+import { BotCore, CONTACT, cairoTime, cleanCaption } from "../src/core.js";
 
 const WORKER = 111, STRANGER = 999;
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
@@ -14,7 +14,9 @@ async function fakeFetch(url, options = {}) {
   if (url.includes("api.telegram.org/file/")) return { ok: true, arrayBuffer: async () => JPEG.buffer };
   if (url.includes("api.telegram.org")) {
     const method = url.split("/").pop();
-    const params = JSON.parse(options.body);
+    const params = options.body instanceof FormData
+      ? Object.fromEntries([...options.body.entries()].map(([k, v]) => [k, k === "media" ? JSON.parse(v) : v]))
+      : JSON.parse(options.body);
     if (method === "sendMessage") sent.push([params.chat_id, params.text]);
     else if (method === "getFile") return json({ ok: true, result: { file_path: "p.jpg" } });
     else previews.push([method, params]);
@@ -135,7 +137,8 @@ assert.equal(alerts().length, 2);
 // 5. 4 PM posts piece 1 (2 photos in one post), never twice.
 at(16, 5); await bot.tick();
 assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed"]);
-assert.ok(fb[2][1].message.endsWith("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
+assert.ok(fb[2][1].message.includes("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
+assert.ok(fb[2][1].message.endsWith(CONTACT));
 console.log("Facebook post:\n" + fb[2][1].message + "\n");
 at(16, 10); await bot.tick();
 assert.equal(fb.length, 3);
@@ -183,7 +186,7 @@ assert.match(previews.at(-1)[1].media[0].caption, /مجوهرات السلام/)
 await tap(WORKER, 1);
 await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
 at(21, 5, 30); await bot.tick();
-assert.equal(previews.at(-1)[0], "sendDocument");
+assert.equal(previews.at(-1)[0], "sendPhoto");      // previews always show photos (with the logo)
 
 // 9c. Text from the worker goes into the piece's note and into Gemini's instructions.
 let lastPrompt = "";
@@ -229,6 +232,23 @@ bot.fetch = async (url, options) => {
 };
 geminiText = "✨ سلسلة رقيقة 💛\nمجوهرات السلام — لمعة تليق بيكي";
 assert.equal(await bot.geminiCaption([JPEG], ""), geminiText);
+
+// 9e. The logo is drawn bottom-right at 16% of the photo width; if Cloudflare Images fails, the photo is kept.
+let drawn = null;
+env.IMAGES = {
+  info: async () => ({ width: 2000, height: 2500 }),
+  input: () => ({
+    transform: (o) => ({ logoWidth: o.width }),
+    draw: (logo, opts) => { drawn = { ...opts, logoWidth: logo.logoWidth }; return {
+      output: async () => ({ response: () => new Response(new Uint8Array([9, 9])) }) }; },
+  }),
+};
+const logoBot = new BotCore(storage, env, fakeFetch, () => clock, new Uint8Array([1]));
+assert.deepEqual([...await logoBot.addLogo(JPEG)], [9, 9]);
+assert.deepEqual(drawn, { bottom: 60, right: 60, opacity: 0.95, logoWidth: 320 });
+env.IMAGES = { info: async () => { throw new Error("down"); } };
+assert.deepEqual(await logoBot.addLogo(JPEG), JPEG);
+delete env.IMAGES;
 
 // 10. AI captions are cleaned of links, phones and hashtags.
 assert.equal(cleanCaption("✨ حلق شيك 💛\nكلمنا 01012087660\nhttps://x.com #دهب"), "✨ حلق شيك 💛");

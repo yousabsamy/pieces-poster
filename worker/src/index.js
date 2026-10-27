@@ -3,6 +3,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { BotCore } from "./core.js";
+import logo from "../assets/logo.png";
 
 export class Bot extends DurableObject {
   constructor(ctx, env) {
@@ -12,7 +13,7 @@ export class Bot extends DurableObject {
       put: (key, value) => ctx.storage.put(key, value),
       setAlarm: (ms) => ctx.storage.setAlarm(ms),
     };
-    this.core = new BotCore(storage, env);
+    this.core = new BotCore(storage, env, undefined, undefined, logo);
   }
 
   handleUpdate(update) {
