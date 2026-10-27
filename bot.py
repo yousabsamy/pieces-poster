@@ -9,7 +9,8 @@ every 15 minutes, and each run:
 Photos sent together (as one album) are one piece, and go out together in one post.
 Captions are written by Gemini (free API key) from the photo; if Gemini fails, a ready-made
 caption is used instead. The shop address, phones and hashtags are always added by this code.
-Without TELEGRAM_BOT_TOKEN set, it only runs a test with a fake queue and sends nothing.
+TEST MODE: until FB_PAGE_TOKEN is set, nothing is posted to Facebook. At posting time the post is
+sent to the allowed Telegram users instead, exactly as it would look on the page.
 """
 
 import base64
@@ -76,7 +77,8 @@ HELP = (
     "/list – القطع اللي مستنية دورها\n"
     "/delete 5 – امسح قطعة رقم 5\n"
     "/merge – اجمع آخر قطعتين في بوست واحد\n"
-    "/caption 5 الكلام الجديد – غيّر كلام قطعة رقم 5\n\n"
+    "/caption 5 الكلام الجديد – غيّر كلام قطعة رقم 5\n"
+    "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n\n"
     "⏳ الرد بيوصل خلال ربع ساعة تقريبًا."
 )
 # ------------------------------------------------------------
@@ -269,19 +271,20 @@ def piece_schedule(state, now):
 # ---------------- Reading the bot's messages ----------------
 
 def photo_file_id(msg):
+    """Return (file_id, sent_as_file) for a photo message, or (None, False)."""
     if msg.get("photo"):
-        return msg["photo"][-1]["file_id"]           # the biggest size
+        return msg["photo"][-1]["file_id"], False    # the biggest size
     doc = msg.get("document") or {}
     if doc.get("mime_type", "").startswith("image/"):
-        return doc["file_id"]                        # photo sent as a file (keeps full quality)
-    return None
+        return doc["file_id"], True                  # photo sent as a file (keeps full quality)
+    return None, False
 
 
 def find_piece(state, piece_id):
     return next((p for p in state["pieces"] if p["id"] == piece_id), None)
 
 
-def add_photo(state, msg, file_id, touched):
+def add_photo(state, msg, file_id, as_file, touched):
     group = msg.get("media_group_id")
     piece = next((p for p in state["pieces"] if group and p.get("group") == group), None)
     if piece is None:
@@ -291,6 +294,8 @@ def add_photo(state, msg, file_id, touched):
         state["pieces"].append(piece)
     if file_id not in piece["photos"] and len(piece["photos"]) < MAX_PHOTOS_PER_POST:
         piece["photos"].append(file_id)
+        if as_file:
+            piece.setdefault("files", []).append(file_id)
     if msg.get("caption") and not piece["note"]:
         piece["note"] = msg["caption"].strip()[:300]
         piece["caption"] = None                      # write it again with the note
@@ -328,6 +333,7 @@ def handle_command(state, chat, text, now):
         last = state["pieces"].pop()
         before = state["pieces"][-1]
         before["photos"] = (before["photos"] + last["photos"])[:MAX_PHOTOS_PER_POST]
+        before["files"] = before.get("files", []) + last.get("files", [])
         before["note"] = before["note"] or last["note"]
         before["caption"] = None
         state.setdefault("recaption", []).append(before["id"])
@@ -341,6 +347,14 @@ def handle_command(state, chat, text, now):
             return send(chat, "اكتبها كده: /caption 5 الكلام الجديد")
         piece["caption"] = new_text.strip()[:1500]
         return send(chat, f"✏️ اتغير كلام قطعة رقم {piece['id']}.")
+
+    if command == "/preview":
+        if not state["pieces"]:
+            return send(chat, "📭 مفيش قطع مستنية دلوقتي.")
+        piece = state["pieces"][0]
+        if not piece.get("caption"):
+            write_caption(piece, [download_photo(f) for f in piece["photos"][:3]])
+        return send_preview(chat, piece, f"👀 ده البوست الجاي (قطعة رقم {piece['id']} – {piece_schedule(state, now)[piece['id']]}):")
 
     send(chat, "مش فاهم الأمر ده 🙂\n\n" + HELP)
 
@@ -358,13 +372,14 @@ def read_messages(state, now):
         if user not in allowed:
             send(chat, f"أهلاً 👋 البوت ده خاص بـ {SHOP_NAME}.\nرقمك هو: {user}\nابعته لصاحب المحل علشان يضيفك.")
             continue
-        file_id = photo_file_id(msg)
+        file_id, as_file = photo_file_id(msg)
         if file_id:
-            add_photo(state, msg, file_id, touched)
+            add_photo(state, msg, file_id, as_file, touched)
         elif msg.get("text", "").startswith("/"):
             try:
                 handle_command(state, chat, msg["text"], now)
-            except ValueError:
+            except (ValueError, RuntimeError) as e:
+                print(f"Command failed: {type(e).__name__}")
                 send(chat, "في حاجة غلط في الأمر، جرب تاني.")
         else:
             send(chat, "ابعت صورة القطعة، أو اكتب /help علشان تشوف الأوامر.")
@@ -386,6 +401,31 @@ def read_messages(state, now):
              f"🗓 هتتنشر {times[piece['id']]}\n\n"
              f"📝 الكلام اللي هيتكتب:\n{piece['caption'] or '(هيتكتب وقت النشر)'}\n\n"
              f"لتغييره: /caption {piece['id']} الكلام الجديد")
+
+
+def send_preview(chat, piece, header):
+    """Show a post on Telegram exactly as it will look on Facebook: the photos with the full caption."""
+    send(chat, header)
+    caption = full_caption(piece)[:1024]
+    files = piece.get("files", [])
+    media = [{"type": "document" if f in files else "photo", "media": f} for f in piece["photos"]]
+    media[0]["caption"] = caption
+    try:
+        if len(media) == 1:
+            method = "sendDocument" if media[0]["type"] == "document" else "sendPhoto"
+            telegram(method, chat_id=chat, caption=caption, **{media[0]["type"]: media[0]["media"]})
+        else:
+            if len({m["type"] for m in media}) > 1:      # Telegram can't mix photos and files in one album
+                for m in media:
+                    m["type"] = "document"
+            telegram("sendMediaGroup", chat_id=chat, media=media)
+    except RuntimeError as e:
+        print(f"Could not send a preview: {e}")
+        send(chat, caption)
+
+
+def full_caption(piece):
+    return f"{piece['caption']}\n\n{FOOTER}"
 
 
 # ---------------- Facebook ----------------
@@ -436,11 +476,23 @@ def post_if_time(state, now):
         return tell_everyone(f"⚠️ كان المفروض يتنشر بوست الساعة {slot % 12 or 12}، بس مفيش قطع في الطابور.\n"
                              "📸 ابعت صور القطع هنا.")
     piece = state["pieces"][0]
+    if not os.environ.get("FB_PAGE_TOKEN"):
+        # TEST MODE: show the post on Telegram instead of posting it.
+        if not piece.get("caption"):
+            write_caption(piece, [download_photo(f) for f in piece["photos"][:3]])
+        state["pieces"].pop(0)
+        state["posted_hours"].append(slot)
+        save_state(state)
+        print(f"Test mode: sent piece {piece['id']} to Telegram instead of Facebook")
+        for user in allowed_users():
+            send_preview(user, piece, f"🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة "
+                                      f"(قطعة رقم {piece['id']}). ما اتنشرش على الفيسبوك.")
+        return
     try:
         images = [download_photo(f) for f in piece["photos"]]
         if not piece.get("caption"):
             write_caption(piece, images)
-        post_id = post_to_facebook(images, f"{piece['caption']}\n\n{FOOTER}")
+        post_id = post_to_facebook(images, full_caption(piece))
     except RuntimeError as e:
         print(f"Posting piece {piece['id']} failed: {e}")
         if state.get("failed_slot") != slot_name:     # tell people once, then keep trying quietly
@@ -481,8 +533,7 @@ def main():
         state.update(day=now.strftime("%Y-%m-%d"), posted_hours=[], failed_slot=None)
     try:
         read_messages(state, now)
-        if os.environ.get("FB_PAGE_TOKEN"):
-            post_if_time(state, now)
+        post_if_time(state, now)
         alert_if_needed(state, now)
     finally:
         save_state(state)

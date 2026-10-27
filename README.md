@@ -58,4 +58,5 @@ After each post it also sends "✅ اتنشرت". If a post fails, it says so on
 
 - To stop it: **Actions → Post jewelry pieces → ⋯ → Disable workflow**.
 - **Run workflow** on that page checks Telegram right away (it posts only at posting time).
+- **Test mode:** until the `FB_PAGE_TOKEN` secret is added, nothing goes to Facebook. At 4 PM and 9 PM the bot sends the post to you on Telegram instead, marked 🧪. `/preview` shows the next post any time.
 - Test on your computer, without sending anything: `python3 test_bot.py`.

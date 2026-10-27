@@ -12,7 +12,7 @@ import bot
 
 WORKER, STRANGER = 111, 999
 JPEG = b"\xff\xd8\xff" + b"0" * 100
-sent, fb_calls, inbox = [], [], []
+sent, fb_calls, inbox, previews = [], [], [], []
 fb_should_fail = False
 
 
@@ -22,6 +22,9 @@ def fake_telegram(method, **params):
         return updates
     if method == "sendMessage":
         sent.append((params["chat_id"], params["text"]))
+        return {}
+    if method in ("sendPhoto", "sendDocument", "sendMediaGroup"):
+        previews.append((method, params))
         return {}
     raise AssertionError(method)
 
@@ -33,10 +36,12 @@ def fake_facebook(path, fields, image=None):
     return {"id": f"id{len(fb_calls)}", "post_id": f"post{len(fb_calls)}"}
 
 
-def message(user, update_id, photo=None, text=None, caption=None, group=None):
+def message(user, update_id, photo=None, text=None, caption=None, group=None, document=None):
     msg = {"message_id": update_id, "from": {"id": user}, "chat": {"id": user, "type": "private"}}
     if photo:
         msg["photo"] = [{"file_id": photo + "-small"}, {"file_id": photo}]
+    if document:
+        msg["document"] = document
     if text:
         msg["text"] = text
     if caption:
@@ -173,6 +178,25 @@ def main():
     # 10. AI captions are cleaned of links, phones and hashtags.
     assert bot.clean_caption("✨ حلق شيك 💛\nكلمنا 01012087660\nhttps://x.com #دهب") == "✨ حلق شيك 💛"
     assert bot.clean_caption("hello") is None
+
+    # 11. TEST MODE (no Facebook key): at posting time the post goes to Telegram, never to Facebook.
+    os.environ.pop("FB_PAGE_TOKEN")
+    message(WORKER, 20, photo="e1", caption="سلسلة", group="G9")
+    message(WORKER, 21, photo="e2", group="G9")
+    message(WORKER, 22, text="/preview")
+    run(state, at(10, day=30))
+    assert previews[-1][0] == "sendMediaGroup" and "سلسلة" in previews[-1][1]["media"][0]["caption"]
+    assert len(state["pieces"]) == 1                       # /preview doesn't use up the piece
+    calls_before = len(fb_calls)
+    sent.clear()
+    run(state, at(16, 5, day=30))
+    assert len(fb_calls) == calls_before and not state["pieces"]
+    assert any(t.startswith("🧪 تجربة") for t in texts_to(WORKER))
+    assert previews[-1][1]["media"][0]["caption"].endswith(bot.FOOTER)
+    message(WORKER, 23, document={"file_id": "f1", "mime_type": "image/jpeg"})
+    run(state, at(17, day=30))
+    run(state, at(21, 5, day=30))
+    assert previews[-1][0] == "sendDocument" and previews[-1][1]["document"] == "f1"
 
     print("All tests passed ✅")
 
