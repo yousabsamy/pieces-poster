@@ -188,8 +188,11 @@ function imageType(bytes) {
 export function cleanCaption(text) {
   // Keep only plain caption lines: no links, hashtags or phone numbers from the AI.
   const lines = text.trim().replace(/^[`"'«»]+|[`"'«»]+$/g, "").trim().split("\n")
-    .map((line) => line.replace(/https?:\/\/\S+|www\.\S+|#\S+/g, "").trim())
-    .filter((line) => !/\d{7,}/.test(line.replace(/\s/g, "")));
+    .map((line) => {
+      const cleaned = line.replace(/https?:\/\/\S+|www\.\S+|#\S+/g, "").trim();
+      return cleaned || !line.trim() ? cleaned : null;     // a line that was only links/hashtags is dropped
+    })
+    .filter((line) => line !== null && !/\d{7,}/.test(line.replace(/\s/g, "")));
   const result = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!/[؀-ۿ]/.test(result) || result.length < 10 || result.length > 700) return null;
   return result;
@@ -213,7 +216,7 @@ export function fullCaption(piece) {
 // ---------------- The bot ----------------
 
 function newState() {
-  return { day: null, posted_hours: [], failed_slot: null, last_alert: 0, next_id: 1, pieces: [] };
+  return { day: null, posted_hours: [], failed_slot: null, last_alert: 0, next_id: 1, pieces: [], open: null };
 }
 
 export class BotCore {
@@ -229,6 +232,7 @@ export class BotCore {
 
   async load() {
     if (!this.state) this.state = (await this.storage.get("state")) || newState();
+    this.state.open ??= null;
     const now = this.now();
     if (this.state.day !== now.date) Object.assign(this.state, { day: now.date, posted_hours: [], failed_slot: null });
     return this.state;
@@ -633,7 +637,9 @@ export class BotCore {
 
     if (command === "/rewrite") {
       const piece = rest ? find(rest) : state.pieces[0];
-      if (!piece) return this.send(chat, "اكتب رقم البوست، مثلاً: /rewrite 5\nشوف الأرقام بـ /list");
+      if (!piece) {
+        return this.send(chat, rest ? `مفيش بوست رقم ${rest}. شوف الأرقام بـ /list` : "📭 مفيش بوستات مستنية دلوقتي.");
+      }
       return this.rewrite(state, chat, piece.id);
     }
 

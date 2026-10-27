@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/test.js",
+    "test": "node test/test.js && node test/scenarios.js",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

@@ -58,7 +58,8 @@ and later `FB_PAGE_TOKEN` (adding it turns off test mode).
 ## Changing things
 
 - `/status` on the Worker shows whether Telegram can reach it.
-- Test: `cd worker && npm test` (fake Telegram/Facebook, nothing is sent).
+- Test: `cd worker && npm test` runs `test/test.js` and 66 scenarios in `test/scenarios.js` (fake Telegram,
+  Facebook, Gemini and clock; nothing is sent).
 - Publish a change: `cd worker && npx wrangler deploy`.
 - After the first deploy, open `https://pieces-poster.pieces-poster.workers.dev/setup` once to connect Telegram.
 - To stop everything: Cloudflare dashboard → Workers → pieces-poster → Settings → Delete (or remove the bot token secret).
