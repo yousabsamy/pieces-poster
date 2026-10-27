@@ -40,6 +40,7 @@ const storage = {
 };
 const env = { ALLOWED_USERS: String(WORKER), TELEGRAM_BOT_TOKEN: "t", GEMINI_API_KEY: "g", FB_PAGE_ID: "1", FB_PAGE_TOKEN: "x" };
 const bot = new BotCore(storage, env, fakeFetch, () => clock);
+bot.geminiWaits = [0, 0];   // retry without real waiting in tests
 
 // Set the fake clock to this Cairo time (works with or without Egypt's summer time).
 const at = (hour, minute = 0, day = 28) => {
@@ -214,6 +215,19 @@ assert.equal(bot.state.next_id, 1);
 const fresh = new BotCore(storage, env, fakeFetch, () => clock);
 await fresh.load();
 assert.deepEqual(fresh.state.pieces, bot.state.pieces);
+
+// 9d. Gemini busy once (429) -> it tries again and still gets a real caption.
+let busyOnce = true;
+const fetchBefore = bot.fetch;
+bot.fetch = async (url, options) => {
+  if (url.includes("generativelanguage") && busyOnce) {
+    busyOnce = false;
+    return { ok: false, status: 429, json: async () => ({}), text: async () => "" };
+  }
+  return fetchBefore(url, options);
+};
+geminiText = "✨ سلسلة رقيقة 💛\nمجوهرات السلام — لمعة تليق بيكي";
+assert.equal(await bot.geminiCaption([JPEG], ""), geminiText);
 
 // 10. AI captions are cleaned of links, phones and hashtags.
 assert.equal(cleanCaption("✨ حلق شيك 💛\nكلمنا 01012087660\nhttps://x.com #دهب"), "✨ حلق شيك 💛");

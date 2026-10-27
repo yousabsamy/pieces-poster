@@ -197,6 +197,7 @@ export class BotCore {
     this.env = env;
     this.fetch = fetchFn;
     this.now = () => cairoTime(nowFn());
+    this.geminiWaits = [0, 15, 30];  // seconds to wait before each Gemini try when it's busy
   }
 
   async load() {
@@ -284,23 +285,31 @@ export class BotCore {
       if (type) parts.push({ inline_data: { mime_type: type, data: Buffer.from(bytes).toString("base64") } });
     }
     const body = JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.9 } });
-    for (const model of GEMINI_MODELS) {
-      try {
-        const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
-            signal: AbortSignal.timeout(90000) });
-        if (!res.ok) {
-          console.log(`Gemini ${model} failed: ${res.status}`);
-          continue;
+    // The free Gemini plan allows only a few requests a minute. When it says "busy" (429/503), wait and try again.
+    for (const wait of this.geminiWaits) {
+      if (wait) await new Promise((r) => setTimeout(r, wait * 1000));
+      let busy = false;
+      for (const model of GEMINI_MODELS) {
+        try {
+          const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
+              signal: AbortSignal.timeout(90000) });
+          if (!res.ok) {
+            console.log(`Gemini ${model} failed: ${res.status}`);
+            if (res.status === 429 || res.status >= 500) busy = true;
+            continue;
+          }
+          const result = await res.json();
+          const text = result.candidates[0].content.parts.filter((p) => !p.thought).map((p) => p.text || "").join("");
+          const caption = cleanCaption(text);
+          if (caption) return caption;
+          console.log(`Gemini ${model} gave an unusable caption`);
+        } catch (e) {
+          console.log(`Gemini ${model} failed: ${e.name}`);
+          busy = true;
         }
-        const result = await res.json();
-        const text = result.candidates[0].content.parts.filter((p) => !p.thought).map((p) => p.text || "").join("");
-        const caption = cleanCaption(text);
-        if (caption) return caption;
-        console.log(`Gemini ${model} gave an unusable caption`);
-      } catch (e) {
-        console.log(`Gemini ${model} failed: ${e.name}`);
       }
+      if (!busy) break;
     }
     return null;
   }
