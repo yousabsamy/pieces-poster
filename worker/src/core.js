@@ -1090,7 +1090,13 @@ export class BotCore {
 
   // ---- Every 5 minutes ----
 
+  paused() {
+    // PAUSED = "yes" in wrangler.toml: nothing is posted and no alerts are sent; the queue is kept as it is.
+    return /^(yes|true|1)$/i.test(this.env.PAUSED || "");
+  }
+
   async tick() {
+    if (this.paused()) return;
     const state = await this.load();
     // Safety net: any post still without a caption (and not already waiting for one) gets another try.
     const waiting = new Set((state.to_caption || []).map((t) => t.id));
@@ -1201,6 +1207,7 @@ export class BotCore {
   }
 
   askPostNow(chat, piece) {
+    if (this.paused()) return this.send(chat, "⏸ البوت متوقف مؤقتًا، مش هينشر حاجة دلوقتي. البوستات محفوظة زي ما هي.");
     return this.telegram("sendMessage", { chat_id: chat,
       text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوستات الساعة 3 و10)`,
       reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
@@ -1232,6 +1239,11 @@ export class BotCore {
     // Runs in the background (alarm) after the "post now" button, because posting can take a while.
     const job = state.post_now;
     if (!job) return;
+    if (this.paused()) {
+      state.post_now = null;
+      await this.save();
+      return this.send(job.chat, "⏸ البوت متوقف مؤقتًا، مش هينشر حاجة دلوقتي. البوستات محفوظة زي ما هي.");
+    }
     state.post_now = null;
     await this.save();
     const piece = state.pieces.find((p) => p.id === job.id);

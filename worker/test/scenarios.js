@@ -872,6 +872,25 @@ await scenario("'اختبر الفيسبوك': hidden photo uploaded then delete
   assert.ok(w2.has(OWNER, "لسه مفيش مفتاح فيسبوك"));
 });
 
+await scenario("PAUSED: no posting, no alerts, no post-now; the queue stays; unpausing continues normally", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  w.env.PAUSED = "yes";
+  w.at(13); await w.tick();
+  w.at(15); await w.tick();
+  w.at(22); await w.tick();
+  await w.tap(HEMA, "postnow:1");
+  await w.msg(HEMA, { text: "انشر 2" });
+  assert.equal(w.fb.length, 0);
+  assert.equal(w.pieces().length, 2);
+  assert.equal(w.count(OWNER, "⚠️ تنبيه"), 0);
+  assert.ok(w.has(HEMA, "البوت متوقف مؤقتًا"));
+  w.env.PAUSED = "no";
+  w.at(15, 0, 29); await w.tick();
+  assert.equal(w.fb.length, 1);
+  assert.equal(w.pieces().length, 1);
+});
+
 // ---------------- Posting on time ----------------
 
 await scenario("3 PM: posts the first post; 3:05 again does nothing; 10 PM posts the next", async () => {

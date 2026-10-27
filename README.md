@@ -43,6 +43,11 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 From 1 PM to 11:30 PM, every hour, if there aren't enough pieces for the rest of today **and** all
 of tomorrow, the bot sends "⚠️ تنبيه: مفيش بوستات جاهزة لبكرة". After each post it sends "✅ اتنشرت".
 
+## Pause
+
+`PAUSED = "yes"` in `worker/wrangler.toml` stops posting and alerts (the queue is kept; the bot still answers).
+Set it to `"no"` and run `npx wrangler deploy` to start again.
+
 ## Test mode
 
 Until the `FB_PAGE_TOKEN` secret is added in Cloudflare, **nothing goes to Facebook**. At 3 PM and 10 PM
