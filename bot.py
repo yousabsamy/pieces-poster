@@ -370,7 +370,7 @@ def read_messages(state, now):
             continue
         user, chat = msg["from"]["id"], msg["chat"]["id"]
         if user not in allowed:
-            send(chat, f"أهلاً 👋 البوت ده خاص بـ {SHOP_NAME}.\nرقمك هو: {user}\nابعته لصاحب المحل علشان يضيفك.")
+            send(chat, f"أهلاً 👋 البوت ده خاص بـ {SHOP_NAME}.\nرقمك هو: {user}\nابعته ليوساب علشان يضيفك.")
             continue
         file_id, as_file = photo_file_id(msg)
         if file_id:
