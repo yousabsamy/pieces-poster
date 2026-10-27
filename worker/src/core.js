@@ -113,11 +113,12 @@ const HELP =
   "• لو عايز تقول حاجة عن القطعة (زي: دبل خفيفة) اكتبها، وهتتحط في الكلام.\n" +
   "• كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
   "الأزرار اللي تحت 👇\n" +
-  "📋 البوستات – كل البوستات اللي مستنية، وتحت كل واحد أزرار (شوف، كلام تاني، اكتب بإيدك، امسح، انشر)\n" +
+  "📋 البوستات – كل البوستات اللي مستنية، وتحت كل واحد أزرار (شوف، كلام تاني، عدّل بـ Gemini، اكتب بإيدك، امسح، انشر)\n" +
   "👀 البوست الجاي – شوفه بالظبط زي ما هيتنشر\n" +
   "🚀 انشر دلوقتي – انشر البوست الجاي حالاً\n" +
   "❌ الغي الصور – الغي الصور اللي لسه بتتبعت\n\n" +
-  "وممكن تكتب كمان: امسح 3 – انشر 2 – كلام جديد 1 – شوف 4 – امسح الكل";
+  "🪄 عدّل بـ Gemini: قوله يغير إيه (مثلاً: خليه أقصر، اذكر إنه هدية).\n\n" +
+  "وممكن تكتب كمان: امسح 3 – انشر 2 – كلام جديد 1 – عدل 1 – شوف 4 – امسح الكل";
 
 // The buttons that stay at the bottom of the chat. Tapping one sends its text, which the bot understands.
 const MENU = {
@@ -141,6 +142,7 @@ const ARABIC_COMMANDS = [
   [/^(امسح الكل|امسح كل البوستات|امسح كل حاجه|ابدا من الاول)$/, () => "/reset"],
   [/^(امسح|احذف|شيل)( البوست)?( رقم)? (\d+)$/, (m) => `/delete ${m[4]}`],
   [/^(كلام جديد|كلام تاني|اكتب تاني|غير الكلام)( للبوست| البوست)?( رقم)?( (\d+))?$/, (m) => `/rewrite ${m[5] || ""}`],
+  [/^(عدل|تعديل|عدل بجيميناي)( البوست)?( رقم)? (\d+)$/, (m) => `/guide ${m[4]}`],
 ];
 
 function cleanArabic(text) {
@@ -419,7 +421,7 @@ export class BotCore {
 
   // ---- Captions ----
 
-  async geminiCaption(images, note, recent = []) {
+  async geminiCaption(images, note, recent = [], edit = null) {
     const key = this.env.GEMINI_API_KEY;
     if (!key) return null;
     const noteText = note
@@ -428,7 +430,13 @@ export class BotCore {
         "what you see in the photo.\n"
       : "";
     const recentText = recent.length ? recent.map((c) => `«${c}»`).join("\n") : "(none)";
-    const parts = [{ text: GEMINI_PROMPT.replace("{recent}", recentText).replace("{note}", noteText) }];
+    const editText = edit
+      ? `- EDIT REQUEST (most important): the current caption is:\n«${edit.base}»\nThe shop asks for this change: ` +
+        `"${edit.instruction}". Write the caption again with exactly this change, keeping what is already good. ` +
+        "Follow the request even if it asks to mention a price, weight, karat or occasion. Still no links, phone " +
+        "numbers or hashtags.\n"
+      : "";
+    const parts = [{ text: GEMINI_PROMPT.replace("{recent}", recentText).replace("{note}", noteText + editText) }];
     for (const bytes of images.slice(0, 3)) {
       const type = imageType(bytes);
       if (type) parts.push({ inline_data: { mime_type: type, data: Buffer.from(bytes).toString("base64") } });
@@ -463,7 +471,7 @@ export class BotCore {
     return null;
   }
 
-  async writeCaption(piece, images, { fallback = true } = {}) {
+  async writeCaption(piece, images, { fallback = true, edit = null } = {}) {
     if (!images) {
       try {
         images = await Promise.all(piece.photos.slice(0, 3).map((f) => this.downloadPhoto(f)));
@@ -472,7 +480,7 @@ export class BotCore {
       }
     }
     const state = this.state;
-    const caption = await this.geminiCaption(images, piece.note, state?.recent || []);
+    const caption = await this.geminiCaption(images, piece.note, edit ? [] : state?.recent || [], edit);
     if (!caption && !fallback) return false;        // Gemini is busy: the caller will try again later
     piece.caption = caption || readyCaption(piece);
     if (state) state.recent = [piece.caption, ...(state.recent || [])].slice(0, 6);   // so captions don't repeat
@@ -512,6 +520,14 @@ export class BotCore {
     if (fileId) return this.addPhoto(state, msg, fileId, asFile);
     const text = msg.text || "";
     const command = text.startsWith("/") ? text : arabicCommand(text);
+    // After tapping 🪄, the next text (that isn't a button) is the change Gemini should make.
+    if (state.guiding?.user === user && text.trim() && (!command || command === "/cancel")) {
+      const id = state.guiding.id;
+      state.guiding = null;
+      await this.save();
+      if (command === "/cancel") return this.send(chat, "تمام، الكلام زي ما هو.");
+      return this.rewrite(state, chat, id, text.trim().slice(0, 300));
+    }
     // After tapping ✏️, the next text (that isn't a button) is the new caption.
     if (state.editing?.user === user && text.trim() && (!command || command === "/cancel")) {
       const piece = state.pieces.find((p) => p.id === state.editing.id);
@@ -563,14 +579,16 @@ export class BotCore {
     const [action, arg] = (query.data || "").split(":");
     const id = Number(arg);
     const piece = state.pieces.find((p) => p.id === id);
-    if (["rewrite", "preview", "edit", "delete", "delyes", "postask"].includes(action) && !piece) {
+    if (["rewrite", "preview", "edit", "guide", "delete", "delyes", "postask"].includes(action) && !piece) {
       return this.send(chat, `مفيش بوست رقم ${arg} دلوقتي.`);
     }
     if (action === "rewrite") return this.rewrite(state, chat, id);
+    if (action === "guide") return this.askGuide(state, chat, query.from.id, piece);
     if (action === "preview") return this.preview(state, chat, piece);
     if (action === "postask") return this.askPostNow(chat, piece);
     if (action === "edit") {
       state.editing = { user: query.from.id, id };
+      state.guiding = null;
       await this.save();
       return this.send(chat, `✏️ ابعت الكلام الجديد لبوست رقم ${id}.\n(أو دوس ❌ الغي الصور علشان تسيبه زي ما هو)`);
     }
@@ -672,7 +690,8 @@ export class BotCore {
       if (!piece.caption) {
         const tries = (job.tries || 0) + 1;
         const giveUp = tries > CAPTION_RETRIES;
-        const ok = await this.writeCaption(piece, null, { fallback: giveUp && !job.old });
+        const edit = job.instruction ? { base: job.old, instruction: job.instruction } : null;
+        const ok = await this.writeCaption(piece, null, { fallback: giveUp && !job.old, edit });
         if (!ok && giveUp && job.old) piece.caption = job.old;    // rewrite failed: keep the old caption
         if (!ok && !piece.caption) {
           state.to_caption.push({ ...job, tries });
@@ -683,7 +702,7 @@ export class BotCore {
         }
       }
       await this.save();
-      const text = (job.rewrite ? `🔄 ده كلام جديد لبوست رقم ${piece.id}:\n\n${piece.caption}` :
+      const text = (job.rewrite ? `${job.instruction ? "🪄 عدلته زي ما قلت" : "🔄 ده كلام جديد"} لبوست رقم ${piece.id}:\n\n${piece.caption}` :
         `${this.cheer(piece.from)}\n\n` +
         `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
         `🗓 هيتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
@@ -692,8 +711,9 @@ export class BotCore {
       try {
         await this.telegram("sendMessage", { chat_id: job.chat, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [
           [{ text: "🔄 كلام تاني من Gemini", callback_data: `rewrite:${piece.id}` },
-            { text: "✏️ اكتب بإيدك", callback_data: `edit:${piece.id}` }],
-          [{ text: "👀 شوفه", callback_data: `preview:${piece.id}` },
+            { text: "🪄 عدّل بـ Gemini", callback_data: `guide:${piece.id}` }],
+          [{ text: "✏️ اكتب بإيدك", callback_data: `edit:${piece.id}` },
+            { text: "👀 شوفه", callback_data: `preview:${piece.id}` },
             { text: "🗑 امسح", callback_data: `delete:${piece.id}` }],
         ] } });
       } catch (e) {
@@ -747,9 +767,16 @@ export class BotCore {
         reply_markup: { inline_keyboard: [[{ text: "أيوه، امسح كل حاجة", callback_data: "reset:yes" }]] } });
     }
 
+    if (command === "/guide") {
+      const piece = find(rest);
+      if (!piece) return this.send(chat, `مفيش بوست رقم ${rest}. دوس 📋 البوستات علشان تشوف الأرقام.`);
+      return this.askGuide(state, chat, user, piece);
+    }
+
     if (command === "/cancel") {
       state.open = null;
       state.editing = null;
+      state.guiding = null;
       await this.send(chat, "❌ اتلغت الصور اللي كانت لسه بتتبعت.");
       return this.askCount(chat);
     }
@@ -763,13 +790,13 @@ export class BotCore {
         lines.push(`\nرقم ${p.id} – ${p.photos.length} صورة – ${times[p.id]}\n${first}`);
       }
       // A row of buttons for each post (Telegram allows up to 100 buttons, so at most 15 posts get them).
-      const rows = state.pieces.slice(0, 15).flatMap((p) => [
+      const rows = state.pieces.slice(0, 14).flatMap((p) => [
         [{ text: `── بوست رقم ${p.id} ──`, callback_data: `preview:${p.id}` }],
         [{ text: "👀", callback_data: `preview:${p.id}` }, { text: "🔄", callback_data: `rewrite:${p.id}` },
-          { text: "✏️", callback_data: `edit:${p.id}` }, { text: "🗑", callback_data: `delete:${p.id}` },
-          { text: "🚀", callback_data: `postask:${p.id}` }],
+          { text: "🪄", callback_data: `guide:${p.id}` }, { text: "✏️", callback_data: `edit:${p.id}` },
+          { text: "🗑", callback_data: `delete:${p.id}` }, { text: "🚀", callback_data: `postask:${p.id}` }],
       ]);
-      lines.push("\n👀 شوف · 🔄 كلام تاني · ✏️ اكتب بإيدك · 🗑 امسح · 🚀 انشر دلوقتي");
+      lines.push("\n👀 شوف · 🔄 كلام تاني · 🪄 عدّل بـ Gemini · ✏️ اكتب بإيدك · 🗑 امسح · 🚀 انشر دلوقتي");
       return this.telegram("sendMessage", { chat_id: chat, text: lines.join("\n").slice(0, 4000),
         reply_markup: { inline_keyboard: rows } }).catch(() => this.send(chat, lines.join("\n")));
     }
@@ -935,16 +962,26 @@ export class BotCore {
       reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
   }
 
-  async rewrite(state, chat, id) {
+  async rewrite(state, chat, id, instruction = null) {
     // Ask Gemini for a new caption (in the background); the old one is kept until the new one is ready.
+    // With an instruction ("خليه أقصر"), Gemini edits the current caption the way it's asked.
     const piece = state.pieces.find((p) => p.id === id);
     if (!piece) return this.send(chat, `مفيش بوست رقم ${id} في الطابور.`);
-    state.recent = [piece.caption, ...(state.recent || [])].filter(Boolean).slice(0, 6);   // so it writes something different
-    state.to_caption = [...(state.to_caption || []).filter((t) => t.id !== id), { id, chat, rewrite: true, old: piece.caption }];
+    if (!instruction) state.recent = [piece.caption, ...(state.recent || [])].filter(Boolean).slice(0, 6);   // write something different
+    const old = piece.caption || (state.to_caption || []).find((t) => t.id === id)?.old || null;
+    state.to_caption = [...(state.to_caption || []).filter((t) => t.id !== id), { id, chat, rewrite: true, old, instruction }];
     piece.caption = null;
     await this.save();
     await this.storage.setAlarm(this.now().ms);
-    return this.send(chat, `⏳ بكتب كلام جديد لبوست رقم ${id}…`);
+    return this.send(chat, instruction ? `🪄 تمام، بعدل كلام بوست رقم ${id}…` : `⏳ بكتب كلام جديد لبوست رقم ${id}…`);
+  }
+
+  async askGuide(state, chat, user, piece) {
+    state.guiding = { user, id: piece.id };
+    state.editing = null;
+    await this.save();
+    return this.send(chat, `🪄 قول لـ Gemini يغير إيه في كلام بوست رقم ${piece.id}.\n` +
+      "مثلاً: خليه أقصر – اذكر إنه هدية – من غير إيموجي – ركز على إن الوزن خفيف\n(أو دوس ❌ الغي الصور علشان تسيبه)");
   }
 
   async postNowConfirmed(state) {

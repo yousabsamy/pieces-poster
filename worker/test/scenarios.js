@@ -620,7 +620,7 @@ await scenario("The ready message has 🔄 ✏️ 👀 🗑 buttons", async () =
   const w = makeBot();
   await w.addPiece();
   const ready = w.sent.find((s) => s.text.includes("جاهز"));
-  assert.deepEqual(ready.buttons.map((b) => b.callback_data), ["rewrite:1", "edit:1", "preview:1", "delete:1"]);
+  assert.deepEqual(ready.buttons.map((b) => b.callback_data), ["rewrite:1", "guide:1", "edit:1", "preview:1", "delete:1"]);
 });
 
 await scenario("No message to the worker mentions a / command anymore", async () => {
@@ -632,6 +632,49 @@ await scenario("No message to the worker mentions a / command anymore", async ()
   await w.msg(HEMA, { text: "/caption" });
   await w.msg(HEMA, { text: "شوف 9" });
   for (const t of w.texts(HEMA)) assert.ok(!/\/(list|preview|caption|delete|rewrite|postnow|help)/.test(t), t);
+});
+
+await scenario("🪄 then a note: Gemini gets the current caption + the change, and the new caption replaces it", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "guide:1");
+  assert.ok(w.has(HEMA, "قول لـ Gemini يغير إيه"));
+  w.gemini = ["✨ هدية تفرّح أي حد 🎁\nمجوهرات السلام"];
+  await w.msg(HEMA, { text: "اذكر إنه هدية" });
+  const prompt = w.prompts.at(-1);
+  assert.ok(prompt.includes("EDIT REQUEST") && prompt.includes(GOOD) && prompt.includes("اذكر إنه هدية"));
+  assert.equal(w.pieces()[0].caption, "✨ هدية تفرّح أي حد 🎁\nمجوهرات السلام");
+  assert.ok(w.has(HEMA, "🪄 عدلته زي ما قلت"));
+  assert.equal(w.bot.state.open, null);           // the note wasn't taken as a piece note
+});
+
+await scenario("🪄 with Gemini down keeps the old caption", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.gemini = [null];
+  await w.tap(HEMA, "guide:1");
+  await w.msg(HEMA, { text: "خليه أقصر" });
+  assert.equal(w.pieces()[0].caption, GOOD);
+});
+
+await scenario("Typing 'عدل 1' opens the same 🪄 flow; ❌ cancels it", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.msg(HEMA, { text: "عدل 1" });
+  assert.ok(w.has(HEMA, "قول لـ Gemini يغير إيه"));
+  await w.msg(HEMA, { text: "❌ الغي الصور" });
+  assert.equal(w.bot.state.guiding, null);
+  assert.equal(w.pieces()[0].caption, GOOD);
+});
+
+await scenario("An edit note may ask for a price/karat (allowed), and recent captions aren't blocked", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "guide:1");
+  await w.msg(HEMA, { text: "اكتب إنه عيار 21" });
+  const prompt = w.prompts.at(-1);
+  assert.ok(prompt.includes("Follow the request even if it asks to mention a price, weight, karat"));
+  assert.ok(prompt.includes("don't repeat these recent captions:\n(none)"));
 });
 
 // ---------------- Posting on time ----------------

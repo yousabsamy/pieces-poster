@@ -15,7 +15,8 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 - A few seconds later the bot answers with the day and time the piece goes out, and the caption.
 - **No / commands needed.** The bot shows Arabic buttons at the bottom of the chat:
   `📋 البوستات` · `👀 البوست الجاي` · `🚀 انشر دلوقتي` · `❌ الغي الصور` · `❓ مساعدة`.
-  The list has buttons under each post: 👀 see · 🔄 new Gemini caption · ✏️ write it yourself · 🗑 delete · 🚀 post now.
+  The list has buttons under each post: 👀 see · 🔄 new Gemini caption · 🪄 tell Gemini what to change
+  (like "خليه أقصر") · ✏️ write it yourself · 🗑 delete · 🚀 post now.
 - Typed Arabic works too: `امسح 3`, `انشر 2`, `كلام جديد 1`, `شوف 4`, `امسح الكل` (`ARABIC_COMMANDS` in `core.js`).
   Any other text is a note for Gemini. The old `/` commands still work.
 
@@ -60,7 +61,7 @@ and later `FB_PAGE_TOKEN` (adding it turns off test mode).
 ## Changing things
 
 - `/status` on the Worker shows whether Telegram can reach it.
-- Test: `cd worker && npm test` runs `test/test.js` and 77 scenarios in `test/scenarios.js` (fake Telegram,
+- Test: `cd worker && npm test` runs `test/test.js` and 81 scenarios in `test/scenarios.js` (fake Telegram,
   Facebook, Gemini and clock; nothing is sent).
 - Publish a change: `cd worker && npx wrangler deploy`.
 - After the first deploy, open `https://pieces-poster.pieces-poster.workers.dev/setup` once to connect Telegram.
