@@ -71,7 +71,20 @@ export default {
     if (url.pathname === "/status") {
       const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
       const { result = {} } = await res.json();
+      // Gemini models this key can use (names only, no private data)
+      let gemini = [];
+      try {
+        const g = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+          { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
+        gemini = ((await g.json()).models || [])
+          .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+          .map((m) => m.name.replace("models/", ""))
+          .filter((n) => /flash|pro/.test(n));
+      } catch (e) {
+        gemini = [`error: ${e.message}`];
+      }
       return Response.json({
+        gemini_models: gemini,
         connected: result.url === `${url.origin}/telegram`,
         waiting_messages: result.pending_update_count,
         last_error: result.last_error_message || null,

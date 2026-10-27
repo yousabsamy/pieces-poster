@@ -19,7 +19,11 @@ const ALERT_FROM = [13, 0];           // send "not enough pieces" alerts only fr
 const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo time)
 const ALERT_EVERY_MINUTES = 60;
 const MAX_PHOTOS_PER_POST = 10;
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"];  // tried in this order
+// Tried in this order (all available on the free key, Oct 2026). Busy or missing ones are skipped.
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest"];
+const CAPTION_RETRIES = 5;           // if Gemini is busy, try again this many times...
+const CAPTION_RETRY_MINUTES = 3;     // ...this many minutes apart, before using a ready-made caption
 const FB_API_VERSION = "v26.0";
 
 const SHOP_NAME = "مجوهرات السلام";
@@ -64,6 +68,7 @@ export const CONTACT =
 const LOGO_WIDTH = 0.16;       // logo width, as a part of the photo's width
 const LOGO_MARGIN = 0.03;      // space from the edges, as a part of the photo's width
 const LOGO_OPACITY = 0.95;
+const MAX_STORIES_PER_POST = 3;  // after each post, its photos (up to this many) also go up as Page Stories
 
 // Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
 const CHEERS = [
@@ -111,6 +116,7 @@ const HELP =
   "/postnow – انشر البوست الجاي دلوقتي (أو /postnow 5 لبوست رقم 5)\n" +
   "/delete 5 – امسح بوست رقم 5\n" +
   "/caption 5 الكلام الجديد – غيّر كلام بوست رقم 5\n" +
+  "/rewrite 5 – خلّي Gemini يكتب كلام جديد لبوست رقم 5\n" +
   "/cancel – الغي الصور اللي لسه بتتبعت";
 // ------------------------------------------------------------
 
@@ -217,7 +223,7 @@ export class BotCore {
     this.env = env;
     this.fetch = fetchFn;
     this.now = () => cairoTime(nowFn());
-    this.geminiWaits = [0, 15, 30];  // seconds to wait before each Gemini try when it's busy
+    this.geminiWaits = [0, 10];      // seconds to wait before each round of Gemini tries when it's busy
   }
 
   async load() {
@@ -298,6 +304,34 @@ export class BotCore {
     }
   }
 
+  async storyImage(bytes) {
+    // A tall (9:16) story picture: the photo in the middle over a blurred, darker copy of itself.
+    const images = this.env.IMAGES;
+    if (!images) return bytes;
+    try {
+      const photo = images.input(new Response(bytes).body).transform({ width: 1000, height: 1700, fit: "contain" });
+      const result = await images.input(new Response(bytes).body)
+        .transform({ width: 1080, height: 1920, fit: "cover", blur: 60, brightness: 0.7 })
+        .draw(photo)
+        .output({ format: "image/jpeg", quality: 90 });
+      return new Uint8Array(await result.response().arrayBuffer());
+    } catch (e) {
+      console.log(`Could not make the story picture: ${e.message}`);
+      return bytes;
+    }
+  }
+
+  async postStories(photos) {
+    // Each photo is uploaded hidden, then published as a Page Story. Returns how many went up.
+    let done = 0;
+    for (const photo of photos.slice(0, MAX_STORIES_PER_POST)) {
+      const { id } = await this.facebook("photos", { published: "false" }, await this.storyImage(photo));
+      await this.facebook("photo_stories", { photo_id: id });
+      done++;
+    }
+    return done;
+  }
+
   async postPhotos(piece) {
     // The photos exactly as they go to Facebook: downloaded from Telegram, with the logo.
     const images = await Promise.all(piece.photos.map((f) => this.downloadPhoto(f)));
@@ -362,9 +396,9 @@ export class BotCore {
         try {
           const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
             { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
-              signal: AbortSignal.timeout(90000) });
+              signal: AbortSignal.timeout(60000) });
           if (!res.ok) {
-            console.log(`Gemini ${model} failed: ${res.status}`);
+            console.log(`Gemini ${model} failed: ${res.status} ${(await res.text()).slice(0, 150)}`);
             if (res.status === 429 || res.status >= 500) busy = true;
             continue;
           }
@@ -383,7 +417,7 @@ export class BotCore {
     return null;
   }
 
-  async writeCaption(piece, images) {
+  async writeCaption(piece, images, { fallback = true } = {}) {
     if (!images) {
       try {
         images = await Promise.all(piece.photos.slice(0, 3).map((f) => this.downloadPhoto(f)));
@@ -392,8 +426,11 @@ export class BotCore {
       }
     }
     const state = this.state;
-    piece.caption = (await this.geminiCaption(images, piece.note, state?.recent || [])) || readyCaption(piece);
+    const caption = await this.geminiCaption(images, piece.note, state?.recent || []);
+    if (!caption && !fallback) return false;        // Gemini is busy: the caller will try again later
+    piece.caption = caption || readyCaption(piece);
     if (state) state.recent = [piece.caption, ...(state.recent || [])].slice(0, 6);   // so captions don't repeat
+    return Boolean(caption);
   }
 
   // ---- Messages from Telegram (called right away for every message) ----
@@ -455,6 +492,9 @@ export class BotCore {
     const count = Number((query.data || "").split(":")[1]);
     await this.telegram("answerCallbackQuery", { callback_query_id: query.id }).catch(() => {});
     if (!this.allowedUsers().includes(query.from.id) || !chat) return;
+    if ((query.data || "").startsWith("rewrite:")) {
+      return this.rewrite(state, chat, Number(query.data.split(":")[1]));
+    }
     if ((query.data || "").startsWith("postnow:")) {
       const id = Number(query.data.split(":")[1]);
       state.post_now = { id, chat };
@@ -530,29 +570,52 @@ export class BotCore {
   }
 
   async writePendingCaptions() {
-    // Runs in the background right after a piece is finished.
+    // Runs in the background right after a piece is finished. If Gemini is busy, it tries again a few minutes
+    // later (up to CAPTION_RETRIES times) before using a ready-made caption.
     const state = await this.load();
-    while (state.to_caption?.length) {
-      const { id, chat } = state.to_caption.shift();
-      await this.save();
-      const piece = state.pieces.find((p) => p.id === id);
+    const jobs = state.to_caption || [];
+    state.to_caption = [];
+    await this.save();
+    let retryLater = false;
+    for (const job of jobs) {
+      const piece = state.pieces.find((p) => p.id === job.id);
       if (!piece) continue;
-      if (!piece.caption) await this.writeCaption(piece);
+      if (!piece.caption) {
+        const tries = (job.tries || 0) + 1;
+        const giveUp = tries > CAPTION_RETRIES;
+        const ok = await this.writeCaption(piece, null, { fallback: giveUp && !job.old });
+        if (!ok && giveUp && job.old) piece.caption = job.old;    // rewrite failed: keep the old caption
+        if (!ok && !piece.caption) {
+          state.to_caption.push({ ...job, tries });
+          await this.save();
+          retryLater = true;
+          if (tries === 1) await this.send(job.chat, "⏳ Gemini مشغول شوية دلوقتي، هكتب الكلام خلال دقايق.");
+          continue;
+        }
+      }
       await this.save();
-      await this.send(chat,
+      const text = (job.rewrite ? `🔄 ده كلام جديد لبوست رقم ${piece.id}:\n\n${piece.caption}` :
         `${this.cheer(piece.from)}\n\n` +
         `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
-        `🗓 هتتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
-        `📝 الكلام اللي هيتكتب:\n${piece.caption}\n\n` +
-        `لتغييره: /caption ${piece.id} الكلام الجديد`);
+        `🗓 هيتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
+        `📝 الكلام اللي هيتكتب:\n${piece.caption}`) +
+        `\n\nلتغييره بإيدك: /caption ${piece.id} الكلام الجديد`;
+      try {
+        await this.telegram("sendMessage", { chat_id: job.chat, text: text.slice(0, 4000), reply_markup: { inline_keyboard:
+          [[{ text: "🔄 كلام تاني من Gemini", callback_data: `rewrite:${piece.id}` }]] } });
+      } catch (e) {
+        await this.send(job.chat, text);
+      }
+      if (job.rewrite) continue;
       if (state.open?.photos.length && !state.open.count) {
         state.open.asked = true;
         await this.save();
-        await this.askCount(chat, "📸 في صور زيادة وصلت. البوست الجاي كام صورة؟");
-      } else if (!state.open) {
-        await this.askCount(chat);
+        await this.askCount(job.chat, "📸 في صور زيادة وصلت. البوست الجاي كام صورة؟");
+      } else if (!state.open && !job.preview) {
+        await this.askCount(job.chat);
       }
     }
+    if (retryLater) await this.storage.setAlarm(this.now().ms + CAPTION_RETRY_MINUTES * 60 * 1000);
   }
 
   async handleCommand(state, chat, text) {
@@ -565,6 +628,12 @@ export class BotCore {
     if (command === "/start" || command === "/help") {
       await this.send(chat, HELP);
       return this.askCount(chat);
+    }
+
+    if (command === "/rewrite") {
+      const piece = rest ? find(rest) : state.pieces[0];
+      if (!piece) return this.send(chat, "اكتب رقم البوست، مثلاً: /rewrite 5\nشوف الأرقام بـ /list");
+      return this.rewrite(state, chat, piece.id);
     }
 
     if (command === "/postnow") {
@@ -666,6 +735,14 @@ export class BotCore {
 
   async tick() {
     const state = await this.load();
+    // Safety net: any post still without a caption (and not already waiting for one) gets another try.
+    const waiting = new Set((state.to_caption || []).map((t) => t.id));
+    const missing = state.pieces.filter((p) => !p.caption && !waiting.has(p.id));
+    if (missing.length) {
+      state.to_caption = [...(state.to_caption || []), ...missing.map((p) => ({ id: p.id, chat: p.from, tries: 1 }))];
+      await this.save();
+      await this.storage.setAlarm(this.now().ms);
+    }
     await this.postIfTime(state, this.now());
     await this.alertIfNeeded(state, this.now());
     await this.save();
@@ -698,7 +775,11 @@ export class BotCore {
     if (!piece.caption) await this.writeCaption(piece);
     const testMode = !this.env.FB_PAGE_TOKEN;
     let postId = null;
-    if (!testMode) postId = await this.postToFacebook(await this.postPhotos(piece), fullCaption(piece));
+    let photos = null;
+    if (!testMode) {
+      photos = await this.postPhotos(piece);
+      postId = await this.postToFacebook(photos, fullCaption(piece));
+    }
     state.pieces.splice(state.pieces.indexOf(piece), 1);
     markDone();
     await this.save();                                 // save right away, so it never posts twice
@@ -706,11 +787,48 @@ export class BotCore {
       for (const user of this.allowedUsers()) {
         await this.sendPreview(user, piece,
           `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (بوست رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
+        await this.sendStoryPreview(user, piece);
       }
       return;
     }
     console.log(`Posted piece ${piece.id}: ${postId}`);
-    await this.tellEveryone(`✅ اتنشر بوست رقم ${piece.id} على الصفحة.\nفاضل: ${state.pieces.length} بوست جاهز.`);
+    let storyNote = "";
+    try {
+      const n = await this.postStories(photos);
+      storyNote = `\n📲 واتنشر كمان في الستوري (${n}).`;
+    } catch (e) {
+      console.log(`Stories failed: ${e.message}`);
+      storyNote = "\n⚠️ البوست اتنشر، بس الستوري ما اتنشرش.";
+    }
+    await this.tellEveryone(`✅ اتنشر بوست رقم ${piece.id} على الصفحة.${storyNote}\nفاضل: ${state.pieces.length} بوست جاهز.`);
+  }
+
+  async sendStoryPreview(chat, piece) {
+    // TEST MODE: show the story pictures too, so you can see how they'll look.
+    try {
+      const photos = (await this.postPhotos(piece)).slice(0, MAX_STORIES_PER_POST);
+      for (const [i, photo] of photos.entries()) {
+        const form = new FormData();
+        form.append("chat_id", String(chat));
+        form.append("caption", `🧪 وده الستوري ${photos.length > 1 ? `(${i + 1} من ${photos.length})` : ""}`.trim());
+        form.append("photo", new Blob([await this.storyImage(photo)], { type: "image/jpeg" }), "story.jpg");
+        await this.telegramForm("sendPhoto", form);
+      }
+    } catch (e) {
+      console.log(`Could not send the story preview: ${e.message}`);
+    }
+  }
+
+  async rewrite(state, chat, id) {
+    // Ask Gemini for a new caption (in the background); the old one is kept until the new one is ready.
+    const piece = state.pieces.find((p) => p.id === id);
+    if (!piece) return this.send(chat, `مفيش بوست رقم ${id} في الطابور.`);
+    state.recent = [piece.caption, ...(state.recent || [])].filter(Boolean).slice(0, 6);   // so it writes something different
+    state.to_caption = [...(state.to_caption || []).filter((t) => t.id !== id), { id, chat, rewrite: true, old: piece.caption }];
+    piece.caption = null;
+    await this.save();
+    await this.storage.setAlarm(this.now().ms);
+    return this.send(chat, `⏳ بكتب كلام جديد لبوست رقم ${id}…`);
   }
 
   async postNowConfirmed(state) {

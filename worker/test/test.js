@@ -134,14 +134,17 @@ assert.equal(alerts().length, 1);         // not again after only 30 minutes
 at(14); await bot.tick();
 assert.equal(alerts().length, 2);
 
-// 5. 4 PM posts piece 1 (2 photos in one post), never twice.
+// 5. 4 PM posts piece 1 (2 photos in one post), never twice. Then its 2 photos go up as stories.
 at(15, 5); await bot.tick();
-assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed"]);
+assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed", "photos", "photo_stories", "photos", "photo_stories"]);
+assert.equal(fb[3][1].published, "false");            // story photos are uploaded hidden first
+assert.equal(fb[4][1].photo_id, "id4");
+assert.ok(to(WORKER).some((t) => t.includes("واتنشر كمان في الستوري (2)")));
 assert.ok(fb[2][1].message.includes("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
 assert.ok(fb[2][1].message.endsWith(CONTACT));
 console.log("Facebook post:\n" + fb[2][1].message + "\n");
 at(15, 10); await bot.tick();
-assert.equal(fb.length, 3);
+assert.equal(fb.length, 7);
 
 // 6. A Facebook error: told once, piece kept, works on the next try.
 fbFail = true; sent = [];
@@ -150,8 +153,9 @@ at(22, 10); await bot.tick();
 assert.equal(to(WORKER).filter((t) => t.startsWith("❌")).length, 1);
 fbFail = false;
 at(22, 15); await bot.tick();
-assert.equal(fb.at(-1)[0], "photos");
-assert.ok(fb.at(-1)[1].caption.startsWith("كلام جديد"));
+const single = fb.filter((c) => c[0] === "photos" && c[1].caption).at(-1);
+assert.ok(single[1].caption.startsWith("كلام جديد"));
+assert.equal(fb.at(-1)[0], "photo_stories");
 assert.deepEqual(bot.state.pieces.map((p) => p.id), [4]);
 sent = [];
 at(23, 20); await bot.tick();
@@ -168,12 +172,18 @@ assert.equal(to(WORKER).filter((t) => t.includes("بس مفيش بوستات ج�
 
 // 8. TEST MODE (no Facebook key): the post goes to Telegram, never to Facebook.
 delete env.FB_PAGE_TOKEN;
-geminiText = null;                        // Gemini down -> ready-made caption
+geminiText = null;                        // Gemini down -> it waits and retries, then a ready-made caption
 at(10, 0, 30);
+sent = [];
 await tap(WORKER, 2);
 await msg(WORKER, { photo: "e1", caption: "سلسلة" });
 await msg(WORKER, { photo: "e2" });
+assert.equal(bot.state.pieces[0].caption, null);           // not given up yet
+assert.equal(to(WORKER).filter((t) => t.includes("Gemini مشغول")).length, 1);
+for (let i = 0; i < 5; i++) await bot.backgroundWork();     // the retries, 3 minutes apart on Cloudflare
 assert.match(bot.state.pieces[0].caption, /سلسلة/);
+assert.equal(bot.state.to_caption.length, 0);
+assert.equal(to(WORKER).filter((t) => t.includes("Gemini مشغول")).length, 1);   // said only once
 await msg(WORKER, { text: "/preview" });
 assert.equal(previews.at(-1)[0], "sendMediaGroup");
 assert.equal(bot.state.pieces.length, 1);  // /preview doesn't use up the piece
@@ -182,7 +192,8 @@ sent = [];
 at(15, 5, 30); await bot.tick();
 assert.equal(fb.length, fbBefore);
 assert.ok(to(WORKER).some((t) => t.startsWith("🧪 تجربة")));
-assert.match(previews.at(-1)[1].media[0].caption, /مجوهرات السلام/);
+assert.ok(previews.some(([m, p]) => m === "sendPhoto" && String(p.caption).startsWith("🧪 وده الستوري")));
+assert.match(previews.filter(([m]) => m === "sendMediaGroup").at(-1)[1].media[0].caption, /مجوهرات السلام/);
 await tap(WORKER, 1);
 await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
 at(22, 5, 30); await bot.tick();
@@ -216,11 +227,41 @@ await msg(WORKER, { text: `/postnow ${ids.at(-1)}` });
 assert.equal(fb.length, fbCount);                 // nothing yet, only the question
 await bot.handleUpdate({ update_id: ++updateId, callback_query: { id: "pn", from: { id: WORKER },
   data: `postnow:${ids.at(-1)}`, message: { message_id: 1, chat: { id: WORKER } } } }).then(background);
-assert.equal(fb.at(-1)[0], "photos");
+assert.equal(fb.at(-1)[0], "photo_stories");
 assert.ok(!bot.state.pieces.some((p) => p.id === ids.at(-1)));
 assert.ok(bot.state.pieces.some((p) => p.id === ids.at(-2)));
 assert.ok(to(WORKER).some((t) => t.startsWith("✅ اتنشر بوست رقم")));
 delete env.FB_PAGE_TOKEN;
+
+// 9g. If the story fails, the post still counts and people are told.
+env.FB_PAGE_TOKEN = "x";
+const realFb = bot.fetch;
+bot.fetch = async (url, options) => url.includes("photo_stories")
+  ? { ok: false, status: 400, json: async () => ({}), text: async () => "no" } : realFb(url, options);
+await tap(WORKER, 1); await msg(WORKER, { photo: "s9" });
+sent = [];
+await bot.publish(bot.state, bot.state.pieces.at(-1));
+assert.ok(to(WORKER).some((t) => t.includes("الستوري ما اتنشرش")));
+bot.fetch = realFb;
+delete env.FB_PAGE_TOKEN;
+
+// 9h. "New caption" button: Gemini writes a different caption for the same post.
+geminiText = "✨ كلام أول 💛\nمجوهرات السلام — أ";
+await tap(WORKER, 1); await msg(WORKER, { photo: "r1" });
+const rw = bot.state.pieces.at(-1);
+assert.equal(rw.caption, geminiText);
+geminiText = "✨ كلام تاني 💛\nمجوهرات السلام — ب";
+sent = [];
+await bot.handleUpdate({ update_id: ++updateId, callback_query: { id: "rw", from: { id: WORKER },
+  data: `rewrite:${rw.id}`, message: { message_id: 1, chat: { id: WORKER } } } }).then(background);
+assert.equal(bot.state.pieces.at(-1).caption, geminiText);
+assert.ok(to(WORKER).some((t) => t.startsWith("🔄 ده كلام جديد")));
+// If Gemini stays down during a rewrite, the old caption is kept.
+geminiText = null;
+await msg(WORKER, { text: `/rewrite ${rw.id}` });
+for (let i = 0; i < 6; i++) await bot.backgroundWork();
+assert.equal(bot.state.pieces.at(-1).caption, "✨ كلام تاني 💛\nمجوهرات السلام — ب");
+geminiText = "✨ سلسلة 💛\nمجوهرات السلام";
 
 // 9b. /reset only empties the queue after the confirm button.
 await tap(WORKER, 1);

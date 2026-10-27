@@ -14,7 +14,7 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 - If photos arrive before a number is chosen, the bot asks once and keeps them.
 - A few seconds later the bot answers with the day and time the piece goes out, and the caption.
 - Commands: `/list`, `/preview` (the next post exactly as it will look), `/postnow` or `/postnow 5`
-  (post the next post, or post 5, right away after a confirm button; the 3 PM / 10 PM posts still happen), `/delete 5`, `/caption 5 new text`,
+  (post the next post, or post 5, right away after a confirm button; the 3 PM / 10 PM posts still happen), `/delete 5`, `/caption 5 new text`, `/rewrite 5` or the 🔄 button (Gemini writes a new caption),
   `/cancel` (drop the photos still being collected), `/reset` (empty the whole queue, with a confirm button).
 
 ## Captions
@@ -23,7 +23,8 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
   whole caption, sign-off line included, in the page's style.
 - It learns the style from about 25 real captions from the page (`STYLE_EXAMPLES` in `core.js`). Add good ones there.
 - It's told not to repeat the last few captions, and never to write a price, weight or karat.
-- If Gemini doesn't work, a ready-made caption in the same style is used. A post is never skipped because of the caption.
+- If Gemini is busy, the bot says so and tries again every 3 minutes (5 times) before using a ready-made caption.
+  A post is never skipped because of the caption. Several Gemini models are tried in order (`GEMINI_MODELS`).
 
 ## Logo and contact info
 
