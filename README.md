@@ -9,7 +9,8 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 ## How the worker uses it
 
 - Before each piece the bot asks **"كام صورة للبوست الجاي؟"** with buttons 1–5. The worker taps the number,
-  then sends that many photos. They go out together in one post. No text is needed.
+  then sends that many photos. They go out together in one post. No text is needed, but if the worker writes
+  something (under a photo or as a message, like `دبل خفيفة` or `عيار 21`), Gemini must work it into the caption.
 - If photos arrive before a number is chosen, the bot asks once and keeps them.
 - A few seconds later the bot answers with the day and time the piece goes out, and the caption.
 - Commands: `/list`, `/preview` (the next post exactly as it will look), `/delete 5`, `/caption 5 new text`,

@@ -76,7 +76,8 @@ const GEMINI_PROMPT =
   "(its shape, design, details, shine). The last line is a sign-off with \"مجوهرات السلام\" and a short " +
   "classy phrase, like the examples (use a new phrase, not always the same one).\n" +
   "- Add 2 to 4 emojis in total, like ✨💛👑😍💍, at the start or end of lines.\n" +
-  "- Never write a price, weight or karat. Do not add hashtags, phone numbers, addresses, links or offers.\n" +
+  "- Never write a price, weight or karat unless it is in the worker's note. Do not add hashtags, phone numbers, " +
+  "addresses, links or offers.\n" +
   "- Write something new. Don't copy an example, and don't repeat these recent captions:\n{recent}\n" +
   "{note}" +
   "Reply with the caption only, nothing else.";
@@ -167,6 +168,11 @@ export function cleanCaption(text) {
   const result = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!/[؀-ۿ]/.test(result) || result.length < 10 || result.length > 700) return null;
   return result;
+}
+
+function addNote(open, text) {
+  const t = text.trim();
+  if (t && !open.note.includes(t)) open.note = (open.note ? `${open.note} – ${t}` : t).slice(0, 300);
 }
 
 function readyCaption(piece) {
@@ -266,7 +272,11 @@ export class BotCore {
   async geminiCaption(images, note, recent = []) {
     const key = this.env.GEMINI_API_KEY;
     if (!key) return null;
-    const noteText = note ? `- The shop's note about the piece (you may use it): "${note}"\n` : "";
+    const noteText = note
+      ? `- IMPORTANT: the shop's worker wrote this about the piece: "${note}". You MUST include this information ` +
+        "in the caption, reworded naturally and nicely in the same style (don't just paste it), and trust it over " +
+        "what you see in the photo.\n"
+      : "";
     const recentText = recent.length ? recent.map((c) => `«${c}»`).join("\n") : "(none)";
     const parts = [{ text: GEMINI_PROMPT.replace("{recent}", recentText).replace("{note}", noteText) }];
     for (const bytes of images.slice(0, 3)) {
@@ -339,6 +349,13 @@ export class BotCore {
       }
       return this.save();
     }
+    if ((msg.text || "").trim()) {
+      // Text from the worker, like "دبل خفيفة": Gemini puts it in this piece's caption.
+      state.open ||= { count: null, photos: [], files: [], note: "", from: user, asked: true };
+      addNote(state.open, msg.text);
+      await this.save();
+      return this.send(chat, `✍️ تمام، هضيف "${state.open.note}" لكلام البوست ده.`);
+    }
     return this.send(chat, "ابعت صور القطعة، أو اكتب /help علشان تشوف الأوامر.");
   }
 
@@ -388,7 +405,7 @@ export class BotCore {
       open.photos.push(fileId);
       if (asFile) open.files.push(fileId);
     }
-    if (msg.caption && !open.note) open.note = msg.caption.trim().slice(0, 300);
+    if (msg.caption) addNote(open, msg.caption);
     if (open.count === null) {
       // Photos came before the number was chosen: ask once, keep collecting.
       if (open.asked) return this.save();

@@ -183,6 +183,23 @@ await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
 at(21, 5, 30); await bot.tick();
 assert.equal(previews.at(-1)[0], "sendDocument");
 
+// 9c. Text from the worker goes into the piece's note and into Gemini's instructions.
+let lastPrompt = "";
+const realFetch = bot.fetch;
+bot.fetch = async (url, options) => {
+  if (url.includes("generativelanguage")) lastPrompt = JSON.parse(options.body).contents[0].parts[0].text;
+  return realFetch(url, options);
+};
+geminiText = "✨ دبل خفيفة وشيك 💛\nمجوهرات السلام — ذوق يليق بيكم";
+await msg(WORKER, { text: "دبل خفيفه" });
+await tap(WORKER, 1);
+await msg(WORKER, { photo: "n1" });
+assert.equal(bot.state.pieces.at(-1).note, "دبل خفيفه");
+assert.match(lastPrompt, /wrote this about the piece: "دبل خفيفه". You MUST include/);
+await tap(WORKER, 1);
+await msg(WORKER, { photo: "n2", caption: "عيار 21" });
+assert.equal(bot.state.pieces.at(-1).note, "عيار 21");
+
 // 9b. /reset only empties the queue after the confirm button.
 await tap(WORKER, 1);
 await msg(WORKER, { photo: "z1" });
