@@ -2,12 +2,12 @@
 // Run: npm test
 
 import assert from "node:assert/strict";
-import { BotCore, FOOTER, cairoTime, cleanCaption } from "../src/core.js";
+import { BotCore, cairoTime, cleanCaption } from "../src/core.js";
 
 const WORKER = 111, STRANGER = 999;
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
-let sent = [], previews = [], fb = [], fbFail = false, geminiText = "✨ حلق دهب رقيق بيلمع 💛👑\nتفاصيل ناعمة ولمعة فخمة 😍✨";
-let clock = 0, alarm = null;
+let sent = [], previews = [], fb = [], fbFail = false, geminiText = "✨ حلق دهب رقيق بيلمع 💛👑\nتفاصيل ناعمة ولمعة فخمة 😍✨\nمجوهرات السلام — ذوقك له بريقه";
+let clock = 0, alarmSet = false;
 
 async function fakeFetch(url, options = {}) {
   const json = (data, status = 200) => ({ ok: status < 400, status, json: async () => data, text: async () => JSON.stringify(data) });
@@ -36,7 +36,7 @@ const store = new Map();
 const storage = {
   get: async (k) => structuredClone(store.get(k)),
   put: async (k, v) => store.set(k, structuredClone(v)),
-  setAlarm: async (ms) => { alarm = ms; },
+  setAlarm: async () => { alarmSet = true; },
 };
 const env = { ALLOWED_USERS: String(WORKER), TELEGRAM_BOT_TOKEN: "t", GEMINI_API_KEY: "g", FB_PAGE_ID: "1", FB_PAGE_TOKEN: "x" };
 const bot = new BotCore(storage, env, fakeFetch, () => clock);
@@ -55,8 +55,17 @@ function msg(user, { photo, text, caption, group, document } = {}) {
   if (text) m.text = text;
   if (caption) m.caption = caption;
   if (group) m.media_group_id = group;
-  return bot.handleUpdate({ update_id: updateId, message: m });
+  return bot.handleUpdate({ update_id: updateId, message: m }).then(background);
 }
+async function background() {   // what the Durable Object alarm does right after
+  if (alarmSet) { alarmSet = false; await bot.writePendingCaptions(); }
+}
+function tap(user, count) {   // the worker taps a number button
+  return bot.handleUpdate({ update_id: ++updateId, callback_query: {
+    id: "q" + updateId, from: { id: user }, data: `count:${count}`, message: { message_id: 1, chat: { id: user } } } })
+    .then(background);
+}
+const asks = () => sent.filter(([, t]) => t.startsWith("📸") && t.includes("كام صورة")).length;
 const to = (user) => sent.filter(([u]) => u === user).map(([, t]) => t);
 const alerts = () => to(WORKER).filter((t) => t.startsWith("⚠️ تنبيه"));
 
@@ -66,37 +75,49 @@ await msg(STRANGER, { photo: "s1" });
 assert.equal(bot.state.pieces.length, 0);
 assert.match(to(STRANGER)[0], /999[\s\S]*يوساب/);
 
-// 2. An album of 2 photos (with a note) = 1 piece, answered once after the album is complete.
-await msg(WORKER, { photo: "a1", caption: "حلق عيار 21", group: "G1" });
-await msg(WORKER, { photo: "a2", group: "G1" });
-await msg(WORKER, { photo: "b1" });
-assert.equal(to(WORKER).length, 0);          // no answer yet, waiting for the rest of the album
-assert.ok(alarm);
-await bot.albumDone();
-assert.deepEqual(bot.state.pieces.map((p) => p.photos.length), [2, 1]);
-assert.equal(bot.state.pieces[0].note, "حلق عيار 21");
-const replies = to(WORKER);
-assert.equal(replies.length, 2);
-assert.match(replies[0], /النهارده الساعة 4 مساءً/);
-assert.match(replies[1], /النهارده الساعة 9 مساءً/);
-console.log("Reply to the worker:\n" + replies[0] + "\n");
+// 2. /start asks how many photos. Tap 2, send 2 photos -> 1 piece with 2 photos, then it asks again.
+await msg(WORKER, { text: "/start" });
+assert.equal(asks(), 1);
+await tap(WORKER, 2);
+await msg(WORKER, { photo: "a1" });
+assert.equal(bot.state.pieces.length, 0);    // still waiting for the 2nd photo
+await msg(WORKER, { photo: "a2" });
+assert.deepEqual(bot.state.pieces.map((p) => p.photos), [["a1", "a2"]]);
+assert.equal(asks(), 2);
+const ready = to(WORKER).find((t) => t.startsWith("✅ قطعة رقم 1"));
+assert.match(ready, /النهارده الساعة 4 مساءً/);
+console.log("Reply to the worker:\n" + ready + "\n");
 
-// 3. Commands.
+// 3. Photos sent BEFORE choosing: the bot asks once, then the number finishes the piece.
+await msg(WORKER, { photo: "b1" });
+assert.equal(asks(), 3);
+await tap(WORKER, 1);
+assert.deepEqual(bot.state.pieces.at(-1).photos, ["b1"]);
+// More photos than chosen: the extra one starts the next piece and the bot asks about it.
+await tap(WORKER, 1);
 await msg(WORKER, { photo: "c1" });
 await msg(WORKER, { photo: "c2" });
-await bot.albumDone();
-await msg(WORKER, { text: "/merge" });
-await msg(WORKER, { text: "/caption 2 كلام جديد" });
+assert.deepEqual(bot.state.pieces.at(-1).photos, ["c1"]);
+assert.deepEqual(bot.state.open.photos, ["c2"]);
+await msg(WORKER, { text: "/cancel" });
+assert.equal(bot.state.open, null);
+await tap(WORKER, 2);
 await msg(WORKER, { photo: "d1" });
-await bot.albumDone();
-await msg(WORKER, { text: "/delete 5" });
+await msg(WORKER, { photo: "d2" });
+
+// Commands.
+await msg(WORKER, { text: "/caption 2 كلام جديد" });
+await msg(WORKER, { text: "/delete 3" });
 sent = [];
 await msg(WORKER, { text: "/list" });
-assert.deepEqual(bot.state.pieces.map((p) => p.id), [1, 2, 3]);
-assert.deepEqual(bot.state.pieces[2].photos, ["c1", "c2"]);
+assert.deepEqual(bot.state.pieces.map((p) => p.id), [1, 2, 4]);
+assert.deepEqual(bot.state.pieces[2].photos, ["d1", "d2"]);
 assert.equal(bot.state.pieces[1].caption, "كلام جديد");
 assert.match(to(WORKER)[0], /بكرة الساعة 4 مساءً/);
 console.log("/list:\n" + to(WORKER)[0] + "\n");
+// A stranger can't press the buttons.
+await tap(STRANGER, 3);
+assert.equal(bot.state.open, null);
 
 // 4. Alerts: 3 pieces, but today (2) + tomorrow (2) need 4 -> alert from 1 PM, every 30 minutes, until 11:30 PM.
 sent = [];
@@ -112,7 +133,7 @@ assert.equal(alerts().length, 2);
 // 5. 4 PM posts piece 1 (2 photos in one post), never twice.
 at(16, 5); await bot.tick();
 assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed"]);
-assert.ok(fb[2][1].message.endsWith(FOOTER) && "attached_media[1]" in fb[2][1]);
+assert.ok(fb[2][1].message.endsWith("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
 console.log("Facebook post:\n" + fb[2][1].message + "\n");
 at(16, 10); await bot.tick();
 assert.equal(fb.length, 3);
@@ -126,7 +147,7 @@ fbFail = false;
 at(21, 15); await bot.tick();
 assert.equal(fb.at(-1)[0], "photos");
 assert.ok(fb.at(-1)[1].caption.startsWith("كلام جديد"));
-assert.deepEqual(bot.state.pieces.map((p) => p.id), [3]);
+assert.deepEqual(bot.state.pieces.map((p) => p.id), [4]);
 sent = [];
 at(23, 20); await bot.tick();
 assert.equal(alerts().length, 1);         // still alerts at 11:20 PM
@@ -144,9 +165,9 @@ assert.equal(to(WORKER).filter((t) => t.includes("مفيش قطع في الطا�
 delete env.FB_PAGE_TOKEN;
 geminiText = null;                        // Gemini down -> ready-made caption
 at(10, 0, 30);
-await msg(WORKER, { photo: "e1", caption: "سلسلة", group: "G9" });
-await msg(WORKER, { photo: "e2", group: "G9" });
-await bot.albumDone();
+await tap(WORKER, 2);
+await msg(WORKER, { photo: "e1", caption: "سلسلة" });
+await msg(WORKER, { photo: "e2" });
 assert.match(bot.state.pieces[0].caption, /سلسلة/);
 await msg(WORKER, { text: "/preview" });
 assert.equal(previews.at(-1)[0], "sendMediaGroup");
@@ -156,9 +177,9 @@ sent = [];
 at(16, 5, 30); await bot.tick();
 assert.equal(fb.length, fbBefore);
 assert.ok(to(WORKER).some((t) => t.startsWith("🧪 تجربة")));
-assert.ok(previews.at(-1)[1].media[0].caption.endsWith(FOOTER));
+assert.match(previews.at(-1)[1].media[0].caption, /مجوهرات السلام/);
+await tap(WORKER, 1);
 await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
-await bot.albumDone();
 at(21, 5, 30); await bot.tick();
 assert.equal(previews.at(-1)[0], "sendDocument");
 

@@ -24,7 +24,7 @@ export class Bot extends DurableObject {
   }
 
   alarm() {
-    return this.core.albumDone();
+    return this.core.writePendingCaptions();   // captions for finished pieces, written in the background
   }
 }
 
@@ -42,7 +42,12 @@ export default {
         return new Response("Forbidden", { status: 403 });
       }
       const update = await request.json();
-      ctx.waitUntil(bot(env).handleUpdate(update).catch((e) => console.log(`Update failed: ${e.message}`)));
+      // Handled before answering Telegram. It's quick: slow work (Gemini) runs later in the alarm.
+      try {
+        await bot(env).handleUpdate(update);
+      } catch (e) {
+        console.log(`Update failed: ${e.message}`);
+      }
       return new Response("ok");
     }
 
@@ -53,12 +58,24 @@ export default {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: `${url.origin}/telegram`, secret_token: env.WEBHOOK_SECRET,
-          allowed_updates: ["message"], drop_pending_updates: true,
+          allowed_updates: ["message", "callback_query"], drop_pending_updates: true,
         }),
       });
       const result = await res.json();
       return new Response(result.ok ? "✅ Telegram is connected to the bot." : `❌ ${result.description}`,
         { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
+
+    // /status shows whether Telegram can reach the bot (no private data).
+    if (url.pathname === "/status") {
+      const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
+      const { result = {} } = await res.json();
+      return Response.json({
+        connected: result.url === `${url.origin}/telegram`,
+        waiting_messages: result.pending_update_count,
+        last_error: result.last_error_message || null,
+        last_error_at: result.last_error_date ? new Date(result.last_error_date * 1000).toISOString() : null,
+      });
     }
 
     return new Response("مجوهرات السلام", { headers: { "Content-Type": "text/plain; charset=utf-8" } });

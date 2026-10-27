@@ -8,17 +8,19 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 
 ## How the worker uses it
 
-- Send the photo of the piece to the bot.
-- If a piece has 2 photos (or more), select them **together** and send them at once. They go out in one post.
-- You can write a note under the photo, for example `حلق عيار 21`. It goes into the caption.
-- The bot answers within a few seconds with the day and time the piece goes out, and the caption.
-- Commands: `/list`, `/delete 5`, `/merge` (last two pieces → one post), `/caption 5 new text`,
-  `/preview` (see the next post exactly as it will look).
+- Before each piece the bot asks **"كام صورة للبوست الجاي؟"** with buttons 1–5. The worker taps the number,
+  then sends that many photos. They go out together in one post. No text is needed.
+- If photos arrive before a number is chosen, the bot asks once and keeps them.
+- A few seconds later the bot answers with the day and time the piece goes out, and the caption.
+- Commands: `/list`, `/preview` (the next post exactly as it will look), `/delete 5`, `/caption 5 new text`,
+  `/cancel` (drop the photos still being collected).
 
 ## Captions
 
-- Gemini looks at the photo and writes 2 lines in the page's own style (like the earrings post).
-- Every post ends with `💛 مجوهرات السلام… الدهب اللي يليق بذوقك.` (`FOOTER` in `core.js`).
+- Gemini looks at the photos, works out what the piece is (حلق، خاتم، دبلة، غويشة، انسيال، سلسلة…) and writes the
+  whole caption, sign-off line included, in the page's style.
+- It learns the style from about 25 real captions from the page (`STYLE_EXAMPLES` in `core.js`). Add good ones there.
+- It's told not to repeat the last few captions, and never to write a price, weight or karat.
 - If Gemini doesn't work, a ready-made caption in the same style is used. A post is never skipped because of the caption.
 
 ## Alerts
@@ -45,6 +47,7 @@ and later `FB_PAGE_TOKEN` (adding it turns off test mode).
 
 ## Changing things
 
+- `/status` on the Worker shows whether Telegram can reach it.
 - Test: `cd worker && npm test` (fake Telegram/Facebook, nothing is sent).
 - Publish a change: `cd worker && npx wrangler deploy`.
 - After the first deploy, open `https://pieces-poster.pieces-poster.workers.dev/setup` once to connect Telegram.

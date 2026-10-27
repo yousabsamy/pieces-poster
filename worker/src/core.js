@@ -19,51 +19,80 @@ const ALERT_FROM = [13, 0];           // send "not enough pieces" alerts only fr
 const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo time)
 const ALERT_EVERY_MINUTES = 30;
 const MAX_PHOTOS_PER_POST = 10;
-const ALBUM_WAIT_SECONDS = 4;         // wait this long for the rest of an album before answering
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"];  // tried in this order
 const FB_API_VERSION = "v26.0";
 
 const SHOP_NAME = "مجوهرات السلام";
-// The last line of every post, same as the page's own posts. Add the address or WhatsApp here if you want them too.
-export const FOOTER = "💛 مجوهرات السلام… الدهب اللي يليق بذوقك.";
 
-// A real post from the page. Gemini copies its style.
-const STYLE_EXAMPLE =
-  "✨ مش مجرد حلق دهب… دي حكاية شياكة بتتحكي من أول نظرة! 💛👑\n" +
-  "تفاصيل كلها رقة، ولمعة كلها فخامة، وتصميم معمول عشان يسيب بصمة في كل إطلالة 😍✨";
+// Real captions from the page's own piece posts (October 2026). Gemini learns the style from these.
+// To teach it more, add good captions here.
+const STYLE_EXAMPLES = [
+  "مش مجرد حلق دهب… دي حكاية شياكة بتتحكي من أول نظرة! 💛👑\nتفاصيل كلها رقة، ولمعة كلها فخامة، وتصميم معمول عشان يسيب بصمة في كل إطلالة 😍✨\nمجوهرات السلام… الدهب اللي يليق بذوقك.",
+  "حلق دهب بتصميم يخطف العين، ولمعة تضيف لإطلالتك لمسة من الرقي والفخامة\nقطعة ناعمة في تفاصيلها، فخمة في حضورها، ومميزة في كل وقت\nمجوهرات السلام… لأنك تستاهلي كل ما هو جميل.",
+  "لمسة ذهب تكمّل أناقتك\nأنسيال فاخر بتصميم راقي وتفاصيل تخطف العين\nمن مجوهرات السلام… لأن الذوق العالي يبدأ من التفاصيل.",
+  "أناقة تِبان من أول نظرة\nانسيالات ذهب بتفاصيل راقية ولمسة فخامة تكمل جمالك\nمجوهرات السلام — لأن التفاصيل الصغيرة تصنع الفرق.",
+  "مش مجرد دبل.. دي حكاية حب متحاوطه بالشياكة والفخامة\nتفصيلة صغيرة.. ومعنى كبير\nمجوهرات السلام — عنوان الرُقيّ والأناقة",
+  "الفخامة في التفاصيل.. والأناقة في الاختيار\nدبلة من ذهب عيار 21 بتصميم راقٍ ونقوش مميزة، تجمع بين جمال الذهب وأصالة الذوق الرفيع.\nلأن كل تفصيلة ليها حكاية.. اختاري اللي يليق بيكي.\nمجوهرات السلام\nعنوان الثقة والشياكة",
+  "دبلة مش مجرد قطعة ذهب…\nدي وعد، وحكاية عمر، وتفصيلة بتكمل أجمل بداية\nاختاروا دبلتكم بعناية…\nلأن الذوق الحقيقي يبدأ من التفاصيل\nمجوهرات السلام",
+  "دبلة تحكي عن وعد… وذهب يكمّل الحكاية\nاختيارك للتفاصيل هو عنوان أناقتك\nمجوهرات السلام",
+  "في عالم الدهب… التفاصيل هي سر الفخامة\nخواتم من دهب تسرق النظرة من أول لمعة\nتصميمات راقية، وشغل مليان ذوق وإبداع… لأن كل ست تستاهل قطعة دهب تليق بجمالها\nمجوهرات السلام\nفخامة في الاختيار… وتميّز في كل تفصيلة",
+  "لأن الأناقة تبدأ من التفاصيل الصغيرة…\nتشكيلة من خواتم الذهب بتصميمات تخطف العين، ولمعة تحكي عن الفخامة والرقي.\nكل خاتم حكاية جمال… وكل تفصيلة معمولة علشان تكمّل شياكتك.\nمجوهرات السلام\nعنوان الذوق الرفيع… ولمعة تليق بيكي",
+  "خاتم واحد… كفيل يكمل أناقتك\nفخامة في التفاصيل، ورقي في الاختيار\nمجوهرات السلام — ذوقك له بريقه الخاص",
+  "تفاصيل صغيرة… بتكمل أناقتك الكبيرة\nخواتم ذهب بتصميم راقي ولمسة من الفخامة\nاختاري اللي يشبه ذوقك… وسيبي الباقي علينا\nمجوهرات السلام",
+  "أناقة تُلبس… وفخامة تليق بيكي\nاختاري خاتمك من أجمل تصاميم الذهب\nلأن التفاصيل الصغيرة هي اللي بتكمل جمالك.\nمجوهرات السلام",
+  "الفخامة مش محتاجة كلام كتير… قطعة واحدة كفاية تحكي عن ذوقك\nخاتم وإسوارة بتفاصيل راقية ولمعة تخطف العين.\nاختاري أناقتك… واختاريها من مجوهرات السلام",
+  "وزن خفيف وشكل خرافه\nيملي العين",
+  "الشياكة مش بالوزن.. الشياكة في التفاصيل\nغوايش ذهب بأوزان خفيفة، عشان كل واحدة تقدر تلبس وتِتألّق\nأناقة رقيقة.. ولمعة تليق بيكي من مجوهرات السلام",
+  "غوايش ذهب.. أناقة تُلبس وتِبان\nتفاصيل فخمة ولمعة تخطف العين\nاختاري شياكتك من مجوهرات السلام",
+  "لأن الأناقة الحقيقية تُرى من أول نظرة…\nغوايش ذهب بتفاصيل تخطف العين، وفخامة تليق بكل لحظة مميزة\nمجوهرات السلام — الذهب لما يكون عنوان للأناقة.",
+  "الفخامة تبدأ من التفاصيل… والذهب عنوانها\nغوايش ذهب بتصميم راقٍ يكمّل أناقتك ويخلي كل إطلالة لها بريق خاص\nمجوهرات السلام\nثقة • أناقة • قيمة تدوم",
+  "لأن الشياكة تفاصيل… والذهب عنوانها\nسلسلة ذهب بتصميم راقي ولمسة فخامة تخطف العين\nمجوهرات السلام.. جمال يدوم وقيمة لا تُقدّر بثمن",
+  "لأن الاسم له حكاية… خليه يتكتب دهب\nسلسلة باسمك بتتصمم مخصوص ليكي، بتفاصيل راقية ولمسة فخامة تليق بيكي\nمجوهرات السلام\nلأن تميزك يستاهل قطعة معمولة مخصوص علشانك.",
+  "فخامة الذهب في كل تفصيلة\nقطعة تخطف الأنظار بتصميمها الملكي وشياكتها اللي ملهاش مثيل\nلأن الأناقة الحقيقية عنوانها الذهب\nمجوهرات السلام… عنوان الفخامة والتميز",
+  "قطعة من الذهب… تحكي عن ذوقك\nتفاصيل فخمة ولمعة تخطف القلب\nمجوهرات السلام — لأن الشياكة لها عنوان.",
+  "قطعة من الفخامة… تفاصيل تخطف العين وأناقة تليق بكل لحظة\nاختاري ذهبك… واختاري التميز مع مجوهرات السلام",
+  "أناقة تليق بكل لحظة… ولمعة ذهب تحكي عن ذوقك الراقي\nمجوهرات السلام — لأن التفاصيل الصغيرة تصنع الفخامة.",
+  "تألقي بلمسة من الذهب الخالص\nتصميمات تناسب كل الأذواق\nأناقة لا تحتاج إلى كلام\nقطعة صغيرة... وقيمة كبيرة",
+];
 
-// Used when Gemini is not available. {note} is what the worker wrote under the photo (if anything).
+// Used only when Gemini is not available.
 const READY_CAPTIONS = [
-  "✨ مش مجرد دهب… دي لمسة شياكة بتبان من أول نظرة! 💛👑\n{note}تفاصيل كلها رقة، ولمعة كلها فخامة 😍✨",
-  "👑 لما الذوق يتقابل مع الدهب… تطلع قطعة زي دي! ✨💛\n{note}تصميم شيك يكمّل إطلالتك في كل مناسبة 😍",
-  "💛 قطعة تخطف العين من أول نظرة! ✨\n{note}شغل نضيف ولمعة فخمة، معمولة مخصوص علشان تفرّحك 😍👑",
-  "✨ الشياكة بتبدأ من التفاصيل… والتفاصيل هنا كلها دهب! 💛\n{note}رقة في التصميم وفخامة في اللمعة 😍✨",
-  "🎁 هدية تفرّح أي حد بتحبه… وتفضل معاه العمر كله! 💛✨\n{note}تصميم رقيق ولمعة تليق بكل مناسبة 👑",
-  "👑 دهب بيتكلم عن نفسه! ✨\n{note}تفاصيل مشغولة بحب، وتصميم يسيب بصمة في كل إطلالة 😍💛",
+  "✨ قطعة من الذهب… تحكي عن ذوقك 💛\nتفاصيل فخمة ولمعة تخطف القلب 😍\nمجوهرات السلام — لأن الشياكة لها عنوان.",
+  "👑 أناقة تليق بكل لحظة… ولمعة ذهب تحكي عن ذوقك الراقي ✨\nمجوهرات السلام — لأن التفاصيل الصغيرة تصنع الفخامة.",
+  "💛 الفخامة مش محتاجة كلام كتير… قطعة واحدة كفاية تحكي عن ذوقك ✨\nمجوهرات السلام… الدهب اللي يليق بذوقك.",
+  "✨ الشياكة بتبدأ من التفاصيل… والتفاصيل هنا كلها دهب! 💛\nرقة في التصميم وفخامة في اللمعة 😍\nمجوهرات السلام — عنوان الذوق والرقي.",
 ];
 
 const GEMINI_PROMPT =
-  "You write Facebook captions for " + SHOP_NAME + ", a gold jewelry shop in El Qanater El Khayreya, Egypt. " +
-  "The photo(s) show ONE gold piece the shop is selling. Write a caption in Egyptian Arabic, exactly 2 lines, " +
-  "in the same style as this real post from the page:\n\n" + STYLE_EXAMPLE + "\n\n" +
-  "Line 1: a catchy hook about this exact piece (say what it is), with 2 emojis like ✨💛👑. " +
-  "Line 2: describe its details, shine and feel, with 2 emojis like 😍✨. {note}" +
-  "Write something new, don't copy the example. Never write a price, weight or karat unless it is in the " +
-  "shop's note. Do not add hashtags, phone numbers, addresses, links or the shop's name. " +
-  "Reply with the 2 lines only, nothing else.";
+  "You write Facebook captions for " + SHOP_NAME + " (Al-Salam Jewelry), a gold jewelry shop in El Qanater " +
+  "El Khayreya, Egypt. The photo(s) show ONE gold piece the shop is selling.\n\n" +
+  "First, look closely and decide exactly what the piece is, in Egyptian words: حلق، خاتم، دبلة، دبل، " +
+  "غويشة / غوايش، انسيال، إسورة، سلسلة، سلسلة باسم، كوليه، تعليقة، طقم، خلخال، سبيكة، جنيه ذهب. " +
+  "If there are several pieces, say so (for example خواتم or طقم).\n\n" +
+  "Then write ONE caption in Egyptian Arabic in exactly the same style as these real captions from the page:\n\n" +
+  STYLE_EXAMPLES.map((c, i) => `[${i + 1}]\n${c}`).join("\n\n") + "\n\n" +
+  "Rules:\n" +
+  "- 2 to 4 short lines. Line 1 is a catchy hook. Then name the piece and describe what you really see " +
+  "(its shape, design, details, shine). The last line is a sign-off with \"مجوهرات السلام\" and a short " +
+  "classy phrase, like the examples (use a new phrase, not always the same one).\n" +
+  "- Add 2 to 4 emojis in total, like ✨💛👑😍💍, at the start or end of lines.\n" +
+  "- Never write a price, weight or karat. Do not add hashtags, phone numbers, addresses, links or offers.\n" +
+  "- Write something new. Don't copy an example, and don't repeat these recent captions:\n{recent}\n" +
+  "{note}" +
+  "Reply with the caption only, nothing else.";
 
 const HELP =
   "أهلاً 👋\n" +
-  "ابعت صورة القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
-  "• لو القطعة ليها أكتر من صورة: اختار الصور مع بعض وابعتهم مرة واحدة، وهيتنشروا في بوست واحد.\n" +
-  "• تقدر تكتب تحت الصورة معلومة عن القطعة (مثلاً: خاتم عيار 21).\n" +
+  "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
+  "• قبل كل قطعة هسألك: كام صورة؟ دوس على الرقم، وبعدين ابعت الصور.\n" +
+  "• الصور دي كلها هتتنشر في بوست واحد، والكلام هيتكتب لوحده.\n" +
   "• كل يوم بيتنشر قطعتين: الساعة 4 العصر و9 بالليل.\n\n" +
   "الأوامر:\n" +
   "/list – القطع اللي مستنية دورها\n" +
+  "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
   "/delete 5 – امسح قطعة رقم 5\n" +
-  "/merge – اجمع آخر قطعتين في بوست واحد\n" +
   "/caption 5 الكلام الجديد – غيّر كلام قطعة رقم 5\n" +
-  "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر";
+  "/cancel – الغي الصور اللي لسه بتتبعت";
 // ------------------------------------------------------------
 
 const DAYS = ["الحد", "الاتنين", "التلات", "الأربع", "الخميس", "الجمعة", "السبت"];
@@ -141,12 +170,12 @@ export function cleanCaption(text) {
 }
 
 function readyCaption(piece) {
-  const note = piece.note ? `${piece.note}\n` : "";
-  return READY_CAPTIONS[piece.id % READY_CAPTIONS.length].replace("{note}", note);
+  const caption = READY_CAPTIONS[piece.id % READY_CAPTIONS.length];
+  return piece.note ? `${piece.note}\n${caption}` : caption;
 }
 
 export function fullCaption(piece) {
-  return `${piece.caption}\n\n${FOOTER}`;
+  return piece.caption;     // Gemini writes the whole caption, sign-off line included
 }
 
 // ---------------- The bot ----------------
@@ -157,7 +186,7 @@ function newState() {
 
 export class BotCore {
   // storage: { get(key), put(key, value), setAlarm(ms) }. fetch and now() are passed in so tests can fake them.
-  constructor(storage, env, fetchFn = fetch, nowFn = Date.now) {
+  constructor(storage, env, fetchFn = (...args) => fetch(...args), nowFn = Date.now) {
     this.storage = storage;
     this.env = env;
     this.fetch = fetchFn;
@@ -167,7 +196,6 @@ export class BotCore {
   async load() {
     if (!this.state) this.state = (await this.storage.get("state")) || newState();
     const now = this.now();
-    this.state.pending ||= [];       // pieces waiting for the rest of their album
     if (this.state.day !== now.date) Object.assign(this.state, { day: now.date, posted_hours: [], failed_slot: null });
     return this.state;
   }
@@ -235,11 +263,12 @@ export class BotCore {
 
   // ---- Captions ----
 
-  async geminiCaption(images, note) {
+  async geminiCaption(images, note, recent = []) {
     const key = this.env.GEMINI_API_KEY;
     if (!key) return null;
-    const noteText = note ? `The shop's note about the piece: "${note}". ` : "";
-    const parts = [{ text: GEMINI_PROMPT.replace("{note}", noteText) }];
+    const noteText = note ? `- The shop's note about the piece (you may use it): "${note}"\n` : "";
+    const recentText = recent.length ? recent.map((c) => `«${c}»`).join("\n") : "(none)";
+    const parts = [{ text: GEMINI_PROMPT.replace("{recent}", recentText).replace("{note}", noteText) }];
     for (const bytes of images.slice(0, 3)) {
       const type = imageType(bytes);
       if (type) parts.push({ inline_data: { mime_type: type, data: Buffer.from(bytes).toString("base64") } });
@@ -248,7 +277,8 @@ export class BotCore {
     for (const model of GEMINI_MODELS) {
       try {
         const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body });
+          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
+            signal: AbortSignal.timeout(90000) });
         if (!res.ok) {
           console.log(`Gemini ${model} failed: ${res.status}`);
           continue;
@@ -273,13 +303,16 @@ export class BotCore {
         images = [];
       }
     }
-    piece.caption = (await this.geminiCaption(images, piece.note)) || readyCaption(piece);
+    const state = this.state;
+    piece.caption = (await this.geminiCaption(images, piece.note, state?.recent || [])) || readyCaption(piece);
+    if (state) state.recent = [piece.caption, ...(state.recent || [])].slice(0, 6);   // so captions don't repeat
   }
 
   // ---- Messages from Telegram (called right away for every message) ----
 
   async handleUpdate(update) {
     const state = await this.load();
+    if (update.callback_query) return this.handleButton(state, update.callback_query);
     const msg = update.message;
     if (!msg || msg.chat?.type !== "private") return;
     const user = msg.from.id;
@@ -296,14 +329,7 @@ export class BotCore {
       asFile = true;
     }
 
-    if (fileId) {
-      const piece = this.addPhoto(state, msg, fileId, asFile);
-      // Wait a few seconds for the rest of the album, then answer once for the whole piece.
-      if (!state.pending.includes(piece.id)) state.pending.push(piece.id);
-      await this.save();
-      await this.storage.setAlarm(this.now().ms + ALBUM_WAIT_SECONDS * 1000);
-      return;
-    }
+    if (fileId) return this.addPhoto(state, msg, fileId, asFile);
     if ((msg.text || "").startsWith("/")) {
       try {
         await this.handleCommand(state, chat, msg.text);
@@ -313,43 +339,100 @@ export class BotCore {
       }
       return this.save();
     }
-    return this.send(chat, "ابعت صورة القطعة، أو اكتب /help علشان تشوف الأوامر.");
+    return this.send(chat, "ابعت صور القطعة، أو اكتب /help علشان تشوف الأوامر.");
   }
 
-  addPhoto(state, msg, fileId, asFile) {
-    const group = msg.media_group_id || null;
-    let piece = group && state.pieces.find((p) => p.group === group);
-    if (!piece) {
-      piece = { id: state.next_id++, photos: [], files: [], group, note: "", caption: null, from: msg.from.id };
-      state.pieces.push(piece);
+  // ---- "How many photos?" ----
+  // Before each piece the bot asks how many photos it has. The next photos, up to that number, become one post.
+  // state.open is the piece being collected: { count (null until chosen), photos, files, note, from, asked }.
+
+  async askCount(chat, text = "📸 كام صورة للبوست الجاي؟") {
+    const buttons = [1, 2, 3, 4, 5].map((n) => ({ text: String(n), callback_data: `count:${n}` }));
+    try {
+      await this.telegram("sendMessage", { chat_id: chat, text, reply_markup: { inline_keyboard: [buttons] } });
+    } catch (e) {
+      console.log(`Could not ask for the count: ${e.message}`);
     }
-    if (!piece.photos.includes(fileId) && piece.photos.length < MAX_PHOTOS_PER_POST) {
-      piece.photos.push(fileId);
-      if (asFile) piece.files.push(fileId);
-    }
-    if (msg.caption && !piece.note) {
-      piece.note = msg.caption.trim().slice(0, 300);
-      piece.caption = null;                       // write it again with the note
-    }
-    return piece;
   }
 
-  async albumDone() {
-    // Called a few seconds after the last photo: write captions and tell the sender when each piece goes out.
-    const state = await this.load();
-    const ids = state.pending;
-    state.pending = [];
+  async handleButton(state, query) {
+    const chat = query.message?.chat?.id;
+    const count = Number((query.data || "").split(":")[1]);
+    await this.telegram("answerCallbackQuery", { callback_query_id: query.id }).catch(() => {});
+    if (!this.allowedUsers().includes(query.from.id) || !chat || !(count >= 1 && count <= MAX_PHOTOS_PER_POST)) return;
+    state.open ||= { count: null, photos: [], files: [], note: "", from: query.from.id, asked: true };
+    state.open.count = count;
     await this.save();
-    for (const id of ids) {
+    await this.telegram("editMessageText", {
+      chat_id: chat, message_id: query.message.message_id, text: `📸 تمام، البوست ده ${count} صورة.`,
+    }).catch(() => {});
+    const left = count - state.open.photos.length;
+    if (left <= 0) return this.finishPiece(state, chat);
+    return this.send(chat, state.open.photos.length ? `فاضل ${left} صورة.` : `ابعت ${count} صورة دلوقتي 👇`);
+  }
+
+  async addPhoto(state, msg, fileId, asFile) {
+    const chat = msg.chat.id;
+    state.open ||= { count: null, photos: [], files: [], note: "", from: msg.from.id, asked: false };
+    const open = state.open;
+    if (!open.photos.includes(fileId)) {
+      open.photos.push(fileId);
+      if (asFile) open.files.push(fileId);
+    }
+    if (msg.caption && !open.note) open.note = msg.caption.trim().slice(0, 300);
+    if (open.count === null) {
+      // Photos came before the number was chosen: ask once, keep collecting.
+      if (open.asked) return this.save();
+      open.asked = true;
+      await this.save();
+      return this.askCount(chat, "📸 وصلت الصورة 👍 البوست ده كام صورة؟");
+    }
+    if (open.photos.length >= open.count) return this.finishPiece(state, chat);
+    return this.save();
+  }
+
+  async finishPiece(state, chat) {
+    // The piece has all its photos: put it in the queue, write the caption, tell the sender, ask for the next one.
+    const open = state.open;
+    const piece = {
+      id: state.next_id++, photos: open.photos.slice(0, open.count), note: open.note, caption: null, from: open.from,
+    };
+    piece.files = open.files.filter((f) => piece.photos.includes(f));
+    const extra = open.photos.slice(open.count);
+    state.open = extra.length
+      ? { count: null, photos: extra, files: open.files.filter((f) => extra.includes(f)), note: "", from: open.from, asked: false }
+      : null;
+    state.pieces.push(piece);
+    // Gemini can take a while, longer than Telegram's message is allowed to wait, so the caption is
+    // written in the background (a Durable Object alarm) and the answer is sent from there.
+    state.to_caption = [...(state.to_caption || []), { id: piece.id, chat }];
+    await this.save();
+    await this.storage.setAlarm(this.now().ms);
+    return this.send(chat, "⏳ استلمت الصور، بكتب الكلام…");
+  }
+
+  async writePendingCaptions() {
+    // Runs in the background right after a piece is finished.
+    const state = await this.load();
+    while (state.to_caption?.length) {
+      const { id, chat } = state.to_caption.shift();
+      await this.save();
       const piece = state.pieces.find((p) => p.id === id);
       if (!piece) continue;
       if (!piece.caption) await this.writeCaption(piece);
       await this.save();
-      await this.send(piece.from,
-        `✅ استلمت قطعة رقم ${piece.id} (${piece.photos.length} صورة)\n` +
+      await this.send(chat,
+        `✅ قطعة رقم ${piece.id} جاهزة (${piece.photos.length} صورة)\n` +
         `🗓 هتتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
         `📝 الكلام اللي هيتكتب:\n${piece.caption}\n\n` +
         `لتغييره: /caption ${piece.id} الكلام الجديد`);
+      if (state.open?.photos.length && !state.open.count) {
+        state.open.asked = true;
+        await this.save();
+        await this.askCount(chat, "📸 في صور زيادة وصلت. البوست الجاي كام صورة؟");
+      } else if (!state.open) {
+        await this.askCount(chat);
+      }
     }
   }
 
@@ -360,7 +443,16 @@ export class BotCore {
     const now = this.now();
     const find = (n) => state.pieces.find((p) => String(p.id) === n);
 
-    if (command === "/start" || command === "/help") return this.send(chat, HELP);
+    if (command === "/start" || command === "/help") {
+      await this.send(chat, HELP);
+      return this.askCount(chat);
+    }
+
+    if (command === "/cancel") {
+      state.open = null;
+      await this.send(chat, "❌ اتلغت الصور اللي كانت لسه بتتبعت.");
+      return this.askCount(chat);
+    }
 
     if (command === "/list") {
       if (!state.pieces.length) return this.send(chat, "📭 مفيش قطع مستنية دلوقتي. ابعت صور القطع هنا.");
@@ -380,18 +472,6 @@ export class BotCore {
       return this.send(chat, `🗑 اتمسحت قطعة رقم ${piece.id}.`);
     }
 
-    if (command === "/merge") {
-      if (state.pieces.length < 2) return this.send(chat, "لازم يكون فيه قطعتين على الأقل علشان أجمعهم.");
-      const last = state.pieces.pop();
-      const before = state.pieces[state.pieces.length - 1];
-      before.photos = [...before.photos, ...last.photos].slice(0, MAX_PHOTOS_PER_POST);
-      before.files = [...(before.files || []), ...(last.files || [])];
-      before.note = before.note || last.note;
-      await this.writeCaption(before);
-      return this.send(chat, `🔗 جمعت قطعة ${last.id} مع قطعة ${before.id} – هيتنشروا في بوست واحد ` +
-        `(${before.photos.length} صورة).\n\n📝 الكلام الجديد:\n${before.caption}`);
-    }
-
     if (command === "/caption") {
       const piece = find(words[0] || "");
       const newText = rest.slice((words[0] || "").length).trim();
@@ -403,7 +483,14 @@ export class BotCore {
     if (command === "/preview") {
       if (!state.pieces.length) return this.send(chat, "📭 مفيش قطع مستنية دلوقتي.");
       const piece = state.pieces[0];
-      if (!piece.caption) await this.writeCaption(piece);
+      if (!piece.caption) {
+        // Write it in the background first (Gemini can be slow), then the user asks again.
+        if (!(state.to_caption || []).some((t) => t.id === piece.id)) {
+          state.to_caption = [...(state.to_caption || []), { id: piece.id, chat }];
+          await this.storage.setAlarm(this.now().ms);
+        }
+        return this.send(chat, "⏳ بكتب كلام البوست ده… ابعت /preview تاني بعد دقيقة.");
+      }
       return this.sendPreview(chat, piece,
         `👀 ده البوست الجاي (قطعة رقم ${piece.id} – ${pieceSchedule(state, now)[piece.id]}):`);
     }
