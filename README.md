@@ -43,7 +43,7 @@ the bot sends the post to you on Telegram instead, marked 🧪.
 
 ## Cloudflare secrets
 
-`TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `ALLOWED_USERS` (like `123, 456`), `WEBHOOK_SECRET`, `FB_PAGE_ID`,
+`TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `ALLOWED_USERS` (like `123, 456`), `USER_NAMES` (like `123:هيما, 456:يوساب`, for "الله ينور يا هيما"), `WEBHOOK_SECRET`, `FB_PAGE_ID`,
 and later `FB_PAGE_TOKEN` (adding it turns off test mode).
 
 ## Changing things

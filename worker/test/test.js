@@ -38,7 +38,7 @@ const storage = {
   put: async (k, v) => store.set(k, structuredClone(v)),
   setAlarm: async () => { alarmSet = true; },
 };
-const env = { ALLOWED_USERS: String(WORKER), TELEGRAM_BOT_TOKEN: "t", GEMINI_API_KEY: "g", FB_PAGE_ID: "1", FB_PAGE_TOKEN: "x" };
+const env = { ALLOWED_USERS: String(WORKER), USER_NAMES: `${WORKER}:هيما`, TELEGRAM_BOT_TOKEN: "t", GEMINI_API_KEY: "g", FB_PAGE_ID: "1", FB_PAGE_TOKEN: "x" };
 const bot = new BotCore(storage, env, fakeFetch, () => clock);
 bot.geminiWaits = [0, 0];   // retry without real waiting in tests
 
@@ -85,7 +85,8 @@ assert.equal(bot.state.pieces.length, 0);    // still waiting for the 2nd photo
 await msg(WORKER, { photo: "a2" });
 assert.deepEqual(bot.state.pieces.map((p) => p.photos), [["a1", "a2"]]);
 assert.equal(asks(), 2);
-const ready = to(WORKER).find((t) => t.startsWith("✅ قطعة رقم 1"));
+const ready = to(WORKER).find((t) => t.includes("✅ بوست رقم 1"));
+assert.match(ready, /الله ينور يا هيما/);
 assert.match(ready, /النهارده الساعة 4 مساءً/);
 console.log("Reply to the worker:\n" + ready + "\n");
 

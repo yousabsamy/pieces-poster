@@ -55,6 +55,15 @@ const STYLE_EXAMPLES = [
   "تألقي بلمسة من الذهب الخالص\nتصميمات تناسب كل الأذواق\nأناقة لا تحتاج إلى كلام\nقطعة صغيرة... وقيمة كبيرة",
 ];
 
+// Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
+const CHEERS = [
+  "🌟 الله ينور يا {name}! 💪🔥 كمّل كده",
+  "👏 الله ينور يا {name}! ✨ شغل عالي",
+  "💛 الله ينور يا {name}! 😍 تسلم إيدك",
+  "🔥 الله ينور يا {name}! 💪 مستنيين القطعة الجاية",
+  "🏆 الله ينور يا {name}! 🌟 إنت جامد",
+];
+
 // Used only when Gemini is not available.
 const READY_CAPTIONS = [
   "✨ قطعة من الذهب… تحكي عن ذوقك 💛\nتفاصيل فخمة ولمعة تخطف القلب 😍\nمجوهرات السلام — لأن الشياكة لها عنوان.",
@@ -91,8 +100,8 @@ const HELP =
   "الأوامر:\n" +
   "/list – البوستات اللي مستنية دورها\n" +
   "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
-  "/delete 5 – امسح قطعة رقم 5\n" +
-  "/caption 5 الكلام الجديد – غيّر كلام قطعة رقم 5\n" +
+  "/delete 5 – امسح بوست رقم 5\n" +
+  "/caption 5 الكلام الجديد – غيّر كلام بوست رقم 5\n" +
   "/cancel – الغي الصور اللي لسه بتتبعت";
 // ------------------------------------------------------------
 
@@ -209,6 +218,21 @@ export class BotCore {
 
   async save() {
     await this.storage.put("state", this.state);
+  }
+
+  nameOf(user) {
+    // USER_NAMES looks like "597598330:يوساب, 123456:هيما"
+    for (const pair of (this.env.USER_NAMES || "").split(",")) {
+      const [id, name] = pair.split(":").map((x) => x.trim());
+      if (Number(id) === Number(user) && name) return name;
+    }
+    return null;
+  }
+
+  cheer(user) {
+    const line = CHEERS[Math.floor(Math.random() * CHEERS.length)];
+    const name = this.nameOf(user);
+    return name ? line.replace("{name}", name) : line.replace(" يا {name}", "");
   }
 
   allowedUsers() {
@@ -457,7 +481,8 @@ export class BotCore {
       if (!piece.caption) await this.writeCaption(piece);
       await this.save();
       await this.send(chat,
-        `✅ قطعة رقم ${piece.id} جاهزة (${piece.photos.length} صورة)\n` +
+        `${this.cheer(piece.from)}\n\n` +
+        `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
         `🗓 هتتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
         `📝 الكلام اللي هيتكتب:\n${piece.caption}\n\n` +
         `لتغييره: /caption ${piece.id} الكلام الجديد`);
@@ -510,7 +535,7 @@ export class BotCore {
       const piece = find(rest);
       if (!piece) return this.send(chat, "اكتب رقم القطعة بعد الأمر، مثلاً: /delete 5\nشوف الأرقام بـ /list");
       state.pieces.splice(state.pieces.indexOf(piece), 1);
-      return this.send(chat, `🗑 اتمسحت قطعة رقم ${piece.id}.`);
+      return this.send(chat, `🗑 اتمسح بوست رقم ${piece.id}.`);
     }
 
     if (command === "/caption") {
@@ -518,7 +543,7 @@ export class BotCore {
       const newText = rest.slice((words[0] || "").length).trim();
       if (!piece || !newText) return this.send(chat, "اكتبها كده: /caption 5 الكلام الجديد");
       piece.caption = newText.slice(0, 1500);
-      return this.send(chat, `✏️ اتغير كلام قطعة رقم ${piece.id}.`);
+      return this.send(chat, `✏️ اتغير كلام بوست رقم ${piece.id}.`);
     }
 
     if (command === "/preview") {
@@ -533,7 +558,7 @@ export class BotCore {
         return this.send(chat, "⏳ بكتب كلام البوست ده… ابعت /preview تاني بعد دقيقة.");
       }
       return this.sendPreview(chat, piece,
-        `👀 ده البوست الجاي (قطعة رقم ${piece.id} – ${pieceSchedule(state, now)[piece.id]}):`);
+        `👀 ده البوست الجاي (بوست رقم ${piece.id} – ${pieceSchedule(state, now)[piece.id]}):`);
     }
 
     return this.send(chat, "مش فاهم الأمر ده 🙂\n\n" + HELP);
@@ -595,7 +620,7 @@ export class BotCore {
       await this.save();
       for (const user of this.allowedUsers()) {
         await this.sendPreview(user, piece,
-          `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (قطعة رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
+          `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (بوست رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
       }
       return;
     }
@@ -610,7 +635,7 @@ export class BotCore {
       const slotName = `${now.date} ${slot}`;
       if (state.failed_slot !== slotName) {          // tell people once, then keep trying quietly
         state.failed_slot = slotName;
-        await this.tellEveryone(`❌ حصلت مشكلة في نشر قطعة رقم ${piece.id}. هحاول تاني كمان شوية.\n${e.message.slice(0, 200)}`);
+        await this.tellEveryone(`❌ حصلت مشكلة في نشر بوست رقم ${piece.id}. هحاول تاني كمان شوية.\n${e.message.slice(0, 200)}`);
       }
       return;
     }
