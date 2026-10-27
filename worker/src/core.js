@@ -68,6 +68,7 @@ export const CONTACT =
 const LOGO_WIDTH = 0.16;       // logo width, as a part of the photo's width
 const LOGO_MARGIN = 0.03;      // space from the edges, as a part of the photo's width
 const LOGO_OPACITY = 0.95;
+const STORIES_ON = false;        // owner wants Stories later: set to true to turn them on
 const MAX_STORIES_PER_POST = 3;  // after each post, its photos (up to this many) also go up as Page Stories
 
 // Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
@@ -787,13 +788,13 @@ export class BotCore {
       for (const user of this.allowedUsers()) {
         await this.sendPreview(user, piece,
           `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (بوست رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
-        await this.sendStoryPreview(user, piece);
+        if (STORIES_ON) await this.sendStoryPreview(user, piece);
       }
       return;
     }
     console.log(`Posted piece ${piece.id}: ${postId}`);
     let storyNote = "";
-    try {
+    if (STORIES_ON) try {
       const n = await this.postStories(photos);
       storyNote = `\n📲 واتنشر كمان في الستوري (${n}).`;
     } catch (e) {

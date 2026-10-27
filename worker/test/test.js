@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { BotCore, CONTACT, cairoTime, cleanCaption } from "../src/core.js";
+// Stories are off for now, so the story checks are skipped (they passed when Stories were on).
 
 const WORKER = 111, STRANGER = 999;
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
@@ -136,15 +137,12 @@ assert.equal(alerts().length, 2);
 
 // 5. 4 PM posts piece 1 (2 photos in one post), never twice. Then its 2 photos go up as stories.
 at(15, 5); await bot.tick();
-assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed", "photos", "photo_stories", "photos", "photo_stories"]);
-assert.equal(fb[3][1].published, "false");            // story photos are uploaded hidden first
-assert.equal(fb[4][1].photo_id, "id4");
-assert.ok(to(WORKER).some((t) => t.includes("واتنشر كمان في الستوري (2)")));
+assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed"]);
 assert.ok(fb[2][1].message.includes("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
 assert.ok(fb[2][1].message.endsWith(CONTACT));
 console.log("Facebook post:\n" + fb[2][1].message + "\n");
 at(15, 10); await bot.tick();
-assert.equal(fb.length, 7);
+assert.equal(fb.length, 3);
 
 // 6. A Facebook error: told once, piece kept, works on the next try.
 fbFail = true; sent = [];
@@ -155,7 +153,7 @@ fbFail = false;
 at(22, 15); await bot.tick();
 const single = fb.filter((c) => c[0] === "photos" && c[1].caption).at(-1);
 assert.ok(single[1].caption.startsWith("كلام جديد"));
-assert.equal(fb.at(-1)[0], "photo_stories");
+assert.equal(fb.at(-1)[0], "photos");
 assert.deepEqual(bot.state.pieces.map((p) => p.id), [4]);
 sent = [];
 at(23, 20); await bot.tick();
@@ -192,7 +190,7 @@ sent = [];
 at(15, 5, 30); await bot.tick();
 assert.equal(fb.length, fbBefore);
 assert.ok(to(WORKER).some((t) => t.startsWith("🧪 تجربة")));
-assert.ok(previews.some(([m, p]) => m === "sendPhoto" && String(p.caption).startsWith("🧪 وده الستوري")));
+
 assert.match(previews.filter(([m]) => m === "sendMediaGroup").at(-1)[1].media[0].caption, /مجوهرات السلام/);
 await tap(WORKER, 1);
 await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
@@ -227,7 +225,7 @@ await msg(WORKER, { text: `/postnow ${ids.at(-1)}` });
 assert.equal(fb.length, fbCount);                 // nothing yet, only the question
 await bot.handleUpdate({ update_id: ++updateId, callback_query: { id: "pn", from: { id: WORKER },
   data: `postnow:${ids.at(-1)}`, message: { message_id: 1, chat: { id: WORKER } } } }).then(background);
-assert.equal(fb.at(-1)[0], "photo_stories");
+assert.equal(fb.at(-1)[0], "photos");
 assert.ok(!bot.state.pieces.some((p) => p.id === ids.at(-1)));
 assert.ok(bot.state.pieces.some((p) => p.id === ids.at(-2)));
 assert.ok(to(WORKER).some((t) => t.startsWith("✅ اتنشر بوست رقم")));
@@ -241,7 +239,7 @@ bot.fetch = async (url, options) => url.includes("photo_stories")
 await tap(WORKER, 1); await msg(WORKER, { photo: "s9" });
 sent = [];
 await bot.publish(bot.state, bot.state.pieces.at(-1));
-assert.ok(to(WORKER).some((t) => t.includes("الستوري ما اتنشرش")));
+assert.ok(!to(WORKER).some((t) => t.includes("الستوري")));      // Stories are off
 bot.fetch = realFb;
 delete env.FB_PAGE_TOKEN;
 
