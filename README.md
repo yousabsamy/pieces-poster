@@ -1,7 +1,7 @@
 # Jewelry pieces auto-poster – مجوهرات السلام
 
 The worker sends photos of a piece to the Telegram bot. The bot answers **right away**, puts the
-piece in a queue, and posts **two pieces a day** to the Facebook page at **4 PM and 9 PM Cairo time**.
+piece in a queue, and posts **two pieces a day** to the Facebook page at **3 PM and 10 PM Cairo time**.
 
 It runs on **Cloudflare Workers** (free). It's completely separate from the gold price poster.
 The code is in `worker/src/core.js`. The settings are at the top of that file.
@@ -38,7 +38,7 @@ of tomorrow, the bot sends "⚠️ تنبيه: مفيش بوستات جاهزة 
 
 ## Test mode
 
-Until the `FB_PAGE_TOKEN` secret is added in Cloudflare, **nothing goes to Facebook**. At 4 PM and 9 PM
+Until the `FB_PAGE_TOKEN` secret is added in Cloudflare, **nothing goes to Facebook**. At 3 PM and 10 PM
 the bot sends the post to you on Telegram instead, marked 🧪.
 
 ## Safety

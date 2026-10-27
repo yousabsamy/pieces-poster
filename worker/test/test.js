@@ -89,7 +89,7 @@ assert.deepEqual(bot.state.pieces.map((p) => p.photos), [["a1", "a2"]]);
 assert.equal(asks(), 2);
 const ready = to(WORKER).find((t) => t.includes("✅ بوست رقم 1"));
 assert.match(ready, /الله ينور يا هيما/);
-assert.match(ready, /النهارده الساعة 4 مساءً/);
+assert.match(ready, /النهارده الساعة 3 مساءً/);
 console.log("Reply to the worker:\n" + ready + "\n");
 
 // 3. Photos sent BEFORE choosing: the bot asks once, then the number finishes the piece.
@@ -117,7 +117,7 @@ await msg(WORKER, { text: "/list" });
 assert.deepEqual(bot.state.pieces.map((p) => p.id), [1, 2, 4]);
 assert.deepEqual(bot.state.pieces[2].photos, ["d1", "d2"]);
 assert.equal(bot.state.pieces[1].caption, "كلام جديد");
-assert.match(to(WORKER)[0], /بكرة الساعة 4 مساءً/);
+assert.match(to(WORKER)[0], /بكرة الساعة 3 مساءً/);
 console.log("/list:\n" + to(WORKER)[0] + "\n");
 // A stranger can't press the buttons.
 await tap(STRANGER, 3);
@@ -135,21 +135,21 @@ at(13, 30); await bot.tick();
 assert.equal(alerts().length, 2);
 
 // 5. 4 PM posts piece 1 (2 photos in one post), never twice.
-at(16, 5); await bot.tick();
+at(15, 5); await bot.tick();
 assert.deepEqual(fb.map((c) => c[0]), ["photos", "photos", "feed"]);
 assert.ok(fb[2][1].message.includes("مجوهرات السلام — ذوقك له بريقه") && "attached_media[1]" in fb[2][1]);
 assert.ok(fb[2][1].message.endsWith(CONTACT));
 console.log("Facebook post:\n" + fb[2][1].message + "\n");
-at(16, 10); await bot.tick();
+at(15, 10); await bot.tick();
 assert.equal(fb.length, 3);
 
 // 6. A Facebook error: told once, piece kept, works on the next try.
 fbFail = true; sent = [];
-at(21, 5); await bot.tick();
-at(21, 10); await bot.tick();
+at(22, 5); await bot.tick();
+at(22, 10); await bot.tick();
 assert.equal(to(WORKER).filter((t) => t.startsWith("❌")).length, 1);
 fbFail = false;
-at(21, 15); await bot.tick();
+at(22, 15); await bot.tick();
 assert.equal(fb.at(-1)[0], "photos");
 assert.ok(fb.at(-1)[1].caption.startsWith("كلام جديد"));
 assert.deepEqual(bot.state.pieces.map((p) => p.id), [4]);
@@ -160,10 +160,10 @@ at(23, 55); await bot.tick();
 assert.equal(alerts().length, 1);         // quiet after 11:30 PM
 
 // 7. Next day: piece 3 at 4 PM; nothing left at 9 PM -> one warning.
-at(16, 5, 29); await bot.tick();
+at(15, 5, 29); await bot.tick();
 sent = [];
-at(21, 5, 29); await bot.tick();
-at(21, 10, 29); await bot.tick();
+at(22, 5, 29); await bot.tick();
+at(22, 10, 29); await bot.tick();
 assert.equal(to(WORKER).filter((t) => t.includes("بس مفيش بوستات جاهزة")).length, 1);
 
 // 8. TEST MODE (no Facebook key): the post goes to Telegram, never to Facebook.
@@ -179,13 +179,13 @@ assert.equal(previews.at(-1)[0], "sendMediaGroup");
 assert.equal(bot.state.pieces.length, 1);  // /preview doesn't use up the piece
 const fbBefore = fb.length;
 sent = [];
-at(16, 5, 30); await bot.tick();
+at(15, 5, 30); await bot.tick();
 assert.equal(fb.length, fbBefore);
 assert.ok(to(WORKER).some((t) => t.startsWith("🧪 تجربة")));
 assert.match(previews.at(-1)[1].media[0].caption, /مجوهرات السلام/);
 await tap(WORKER, 1);
 await msg(WORKER, { document: { file_id: "f1", mime_type: "image/jpeg" } });
-at(21, 5, 30); await bot.tick();
+at(22, 5, 30); await bot.tick();
 assert.equal(previews.at(-1)[0], "sendPhoto");      // previews always show photos (with the logo)
 
 // 9c. Text from the worker goes into the piece's note and into Gemini's instructions.

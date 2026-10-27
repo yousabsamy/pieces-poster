@@ -13,7 +13,7 @@
 import { Buffer } from "node:buffer";
 
 // ---------------- Settings (safe to change) ----------------
-export const POST_HOURS = [16, 21];   // post one piece at each of these Cairo hours (4 PM and 9 PM)
+export const POST_HOURS = [15, 22];   // post one piece at each of these Cairo hours (3 PM and 10 PM)
 const LATE_LIMIT_HOURS = 2;           // if something was down, still post up to this many hours after the time
 const ALERT_FROM = [13, 0];           // send "not enough pieces" alerts only from 1:00 PM...
 const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo time)
@@ -104,7 +104,7 @@ const HELP =
   "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
   "• قبل كل قطعة هسألك: كام صورة؟ دوس على الرقم، وبعدين ابعت الصور.\n" +
   "• الصور دي كلها هتتنشر في بوست واحد، والكلام هيتكتب لوحده.\n" +
-  "• كل يوم بيتنشر قطعتين: الساعة 4 العصر و9 بالليل.\n\n" +
+  "• كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
   "الأوامر:\n" +
   "/list – البوستات اللي مستنية دورها\n" +
   "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
