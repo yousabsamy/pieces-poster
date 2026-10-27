@@ -26,14 +26,14 @@ This is completely separate from the gold price poster. It has its own GitHub re
 
 ## Alerts
 
-From 10 AM to 10 PM, every 30 minutes, if there aren't enough pieces for the rest of today **and** all
+From 1 PM to 11:30 PM, every 30 minutes, if there aren't enough pieces for the rest of today **and** all
 of tomorrow, the bot sends a Telegram message: "⚠️ تنبيه: مفيش بوستات جاهزة لبكرة".
 After each post it also sends "✅ اتنشرت". If a post fails, it says so once and keeps trying.
 
 ## Settings (top of `bot.py`)
 
 - `POST_HOURS = [16, 21]` – posting times (Cairo)
-- `ALERT_HOURS = (10, 22)` – alerts only between these hours
+- `ALERT_FROM = (13, 0)` and `ALERT_UNTIL = (23, 30)` – alerts only from 1 PM to 11:30 PM
 - `ALERT_EVERY_MINUTES = 30`
 
 ## Safety

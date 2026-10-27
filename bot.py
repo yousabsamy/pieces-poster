@@ -28,7 +28,8 @@ from zoneinfo import ZoneInfo
 # ---------------- Settings (safe to change) ----------------
 POST_HOURS = [16, 21]       # post one piece at each of these Cairo hours (4 PM and 9 PM)
 LATE_LIMIT_HOURS = 2        # if GitHub runs late, still post up to this many hours after the time
-ALERT_HOURS = (10, 22)      # send "not enough pieces" alerts only from 10 AM to 10 PM
+ALERT_FROM = (13, 0)        # send "not enough pieces" alerts only from 1:00 PM...
+ALERT_UNTIL = (23, 30)      # ...until 11:30 PM (hour, minute, Cairo time)
 ALERT_EVERY_MINUTES = 30
 MAX_PHOTOS_PER_POST = 10
 GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"]  # tried in this order
@@ -459,7 +460,7 @@ def alert_if_needed(state, now):
     """Warn if the queue doesn't cover what's left today plus all of tomorrow."""
     left_today = sum(1 for at in upcoming_slots(state, now, len(POST_HOURS)) if at.date() == now.date())
     missing = left_today + len(POST_HOURS) - len(state["pieces"])
-    if missing <= 0 or not ALERT_HOURS[0] <= now.hour < ALERT_HOURS[1]:
+    if missing <= 0 or not ALERT_FROM <= (now.hour, now.minute) <= ALERT_UNTIL:
         return
     last = state.get("last_alert")
     if last and now - datetime.fromisoformat(last) < timedelta(minutes=ALERT_EVERY_MINUTES - 5):

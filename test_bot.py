@@ -118,14 +118,14 @@ def main():
     def alerts():
         return [t for t in texts_to(WORKER) if t.startswith("⚠️ تنبيه")]
     sent.clear()
-    run(state, at(11))
+    run(state, at(12, 45))                    # too early: alerts start at 1 PM
+    assert len(alerts()) == 0
+    run(state, at(13))
     assert len(alerts()) == 1, alerts()
     print("Alert:\n" + alerts()[0] + "\n")
-    run(state, at(11, 15))
+    run(state, at(13, 15))
     assert len(alerts()) == 1
-    run(state, at(11, 31))
-    assert len(alerts()) == 2
-    run(state, at(23))                        # quiet at night
+    run(state, at(13, 31))
     assert len(alerts()) == 2
 
     # 6. Posting: 4 PM posts piece 1 (3 photos in one post), and never twice.
@@ -149,6 +149,11 @@ def main():
     run(state, at(21, 35))
     assert fb_calls[-1][0] == "photos" and fb_calls[-1][1]["caption"].startswith("كلام جديد")
     assert [p["id"] for p in state["pieces"]] == [3]
+    before = len(alerts())
+    run(state, at(23, 20))                    # still alerts at 11:20 PM
+    assert len(alerts()) == before + 1
+    run(state, at(23, 55))                    # quiet after 11:30 PM
+    assert len(alerts()) == before + 1
 
     # 8. Next day: piece 3 posts at 4 PM, then nothing is left for 9 PM -> warning, slot closed.
     run(state, at(16, 5, day=29))
