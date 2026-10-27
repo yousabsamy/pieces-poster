@@ -89,7 +89,7 @@ const HELP =
   "• الصور دي كلها هتتنشر في بوست واحد، والكلام هيتكتب لوحده.\n" +
   "• كل يوم بيتنشر قطعتين: الساعة 4 العصر و9 بالليل.\n\n" +
   "الأوامر:\n" +
-  "/list – القطع اللي مستنية دورها\n" +
+  "/list – البوستات اللي مستنية دورها\n" +
   "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
   "/delete 5 – امسح قطعة رقم 5\n" +
   "/caption 5 الكلام الجديد – غيّر كلام قطعة رقم 5\n" +
@@ -391,7 +391,7 @@ export class BotCore {
       this.state = Object.assign(newState(), { day: state.day, posted_hours: state.posted_hours });
       await this.save();
       await this.telegram("editMessageText", { chat_id: chat, message_id: query.message.message_id,
-        text: "🗑 اتمسحت كل القطع. البوت بدأ من الأول." }).catch(() => {});
+        text: "🗑 اتمسحت كل البوستات. البوت بدأ من الأول." }).catch(() => {});
       return this.askCount(chat);
     }
     if (!(count >= 1 && count <= MAX_PHOTOS_PER_POST)) return;
@@ -485,7 +485,7 @@ export class BotCore {
 
     if (command === "/reset") {
       return this.telegram("sendMessage", { chat_id: chat,
-        text: `⚠️ متأكد إنك عايز تمسح كل القطع اللي مستنية (${state.pieces.length} قطعة)؟`,
+        text: `⚠️ متأكد إنك عايز تمسح كل البوستات اللي مستنية (${state.pieces.length} بوست)؟`,
         reply_markup: { inline_keyboard: [[{ text: "أيوه، امسح كل حاجة", callback_data: "reset:yes" }]] } });
     }
 
@@ -496,9 +496,9 @@ export class BotCore {
     }
 
     if (command === "/list") {
-      if (!state.pieces.length) return this.send(chat, "📭 مفيش قطع مستنية دلوقتي. ابعت صور القطع هنا.");
+      if (!state.pieces.length) return this.send(chat, "📭 مفيش بوستات مستنية دلوقتي. ابعت صور القطع هنا.");
       const times = pieceSchedule(state, now);
-      const lines = [`🗂 القطع اللي مستنية (${state.pieces.length}):`];
+      const lines = [`🗂 البوستات اللي مستنية (${state.pieces.length}):`];
       for (const p of state.pieces) {
         const first = (p.caption || p.note || "").split("\n")[0].slice(0, 50);
         lines.push(`\nرقم ${p.id} – ${p.photos.length} صورة – ${times[p.id]}\n${first}`);
@@ -522,7 +522,7 @@ export class BotCore {
     }
 
     if (command === "/preview") {
-      if (!state.pieces.length) return this.send(chat, "📭 مفيش قطع مستنية دلوقتي.");
+      if (!state.pieces.length) return this.send(chat, "📭 مفيش بوستات مستنية دلوقتي.");
       const piece = state.pieces[0];
       if (!piece.caption) {
         // Write it in the background first (Gemini can be slow), then the user asks again.
@@ -582,7 +582,7 @@ export class BotCore {
     if (!state.pieces.length) {
       state.posted_hours.push(slot);
       await this.save();
-      return this.tellEveryone(`⚠️ كان المفروض يتنشر بوست الساعة ${slot % 12 || 12}، بس مفيش قطع في الطابور.\n` +
+      return this.tellEveryone(`⚠️ كان المفروض يتنشر بوست الساعة ${slot % 12 || 12}، بس مفيش بوستات جاهزة.\n` +
         "📸 ابعت صور القطع هنا.");
     }
     const piece = state.pieces[0];
@@ -618,7 +618,7 @@ export class BotCore {
     state.posted_hours.push(slot);
     await this.save();                                 // save right away, so it never posts twice
     console.log(`Posted piece ${piece.id}: ${postId}`);
-    await this.tellEveryone(`✅ اتنشرت قطعة رقم ${piece.id} على الصفحة.\nفاضل في الطابور: ${state.pieces.length} قطعة.`);
+    await this.tellEveryone(`✅ اتنشر بوست رقم ${piece.id} على الصفحة.\nفاضل: ${state.pieces.length} بوست جاهز.`);
   }
 
   async alertIfNeeded(state, now) {
@@ -632,7 +632,7 @@ export class BotCore {
     state.last_alert = now.ms;
     await this.save();
     await this.tellEveryone("⚠️ تنبيه: مفيش بوستات جاهزة لبكرة.\n" +
-      `في الطابور ${state.pieces.length} قطعة، ومحتاجين ${missing} قطعة كمان.\n` +
+      `جاهز ${state.pieces.length} بوست بس، ومحتاجين ${missing} بوست كمان.\n` +
       "📸 ابعت صور القطع هنا.");
   }
 }

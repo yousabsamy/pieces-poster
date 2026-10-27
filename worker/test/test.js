@@ -160,7 +160,7 @@ at(16, 5, 29); await bot.tick();
 sent = [];
 at(21, 5, 29); await bot.tick();
 at(21, 10, 29); await bot.tick();
-assert.equal(to(WORKER).filter((t) => t.includes("مفيش قطع في الطابور")).length, 1);
+assert.equal(to(WORKER).filter((t) => t.includes("بس مفيش بوستات جاهزة")).length, 1);
 
 // 8. TEST MODE (no Facebook key): the post goes to Telegram, never to Facebook.
 delete env.FB_PAGE_TOKEN;
