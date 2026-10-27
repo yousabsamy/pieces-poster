@@ -110,15 +110,56 @@ const HELP =
   "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
   "• قبل كل قطعة هسألك: كام صورة؟ دوس على الرقم، وبعدين ابعت الصور.\n" +
   "• الصور دي كلها هتتنشر في بوست واحد، والكلام هيتكتب لوحده.\n" +
+  "• لو عايز تقول حاجة عن القطعة (زي: دبل خفيفة) اكتبها، وهتتحط في الكلام.\n" +
   "• كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
-  "الأوامر:\n" +
-  "/list – البوستات اللي مستنية دورها\n" +
-  "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
-  "/postnow – انشر البوست الجاي دلوقتي (أو /postnow 5 لبوست رقم 5)\n" +
-  "/delete 5 – امسح بوست رقم 5\n" +
-  "/caption 5 الكلام الجديد – غيّر كلام بوست رقم 5\n" +
-  "/rewrite 5 – خلّي Gemini يكتب كلام جديد لبوست رقم 5\n" +
-  "/cancel – الغي الصور اللي لسه بتتبعت";
+  "الأزرار اللي تحت 👇\n" +
+  "📋 البوستات – كل البوستات اللي مستنية، وتحت كل واحد أزرار (شوف، كلام تاني، اكتب بإيدك، امسح، انشر)\n" +
+  "👀 البوست الجاي – شوفه بالظبط زي ما هيتنشر\n" +
+  "🚀 انشر دلوقتي – انشر البوست الجاي حالاً\n" +
+  "❌ الغي الصور – الغي الصور اللي لسه بتتبعت\n\n" +
+  "وممكن تكتب كمان: امسح 3 – انشر 2 – كلام جديد 1 – شوف 4 – امسح الكل";
+
+// The buttons that stay at the bottom of the chat. Tapping one sends its text, which the bot understands.
+const MENU = {
+  keyboard: [
+    [{ text: "📋 البوستات" }, { text: "👀 البوست الجاي" }],
+    [{ text: "🚀 انشر دلوقتي" }, { text: "❌ الغي الصور" }],
+    [{ text: "❓ مساعدة" }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+
+// Arabic words -> the command they mean. Checked on the cleaned text (no emojis, أ/إ/آ -> ا, ة -> ه, ى -> ي).
+const ARABIC_COMMANDS = [
+  [/^(البوستات|القايمه|القائمه|الطابور|البوستات اللي مستنيه|ليسته)$/, () => "/list"],
+  [/^(البوست الجاي|شوف البوست|شوف|معاينه)$/, () => "/preview"],
+  [/^(شوف|معاينه)( البوست)?( رقم)? (\d+)$/, (m) => `/preview ${m[4]}`],
+  [/^انشر( دلوقتي| دلوقت| حالا| البوست)?( رقم)?( (\d+))?$/, (m) => `/postnow ${m[4] || ""}`],
+  [/^(الغي|الغاء|الغي الصور|كنسل)$/, () => "/cancel"],
+  [/^(مساعده|ساعدني|الاوامر|ابدا|القائمه الرئيسيه)$/, () => "/help"],
+  [/^(امسح الكل|امسح كل البوستات|امسح كل حاجه|ابدا من الاول)$/, () => "/reset"],
+  [/^(امسح|احذف|شيل)( البوست)?( رقم)? (\d+)$/, (m) => `/delete ${m[4]}`],
+  [/^(كلام جديد|كلام تاني|اكتب تاني|غير الكلام)( للبوست| البوست)?( رقم)?( (\d+))?$/, (m) => `/rewrite ${m[5] || ""}`],
+];
+
+function cleanArabic(text) {
+  return text
+    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d))
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")          // tashkeel and tatweel
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي")
+    .replace(/[^\u0600-\u06FFa-zA-Z0-9\s]/g, " ")          // emojis and punctuation
+    .replace(/\s+/g, " ").trim();
+}
+
+export function arabicCommand(text) {
+  const clean = cleanArabic(text);
+  for (const [pattern, toCommand] of ARABIC_COMMANDS) {
+    const m = clean.match(pattern);
+    if (m) return toCommand(m).trim();
+  }
+  return null;
+}
 // ------------------------------------------------------------
 
 const DAYS = ["الحد", "الاتنين", "التلات", "الأربع", "الخميس", "الجمعة", "السبت"];
@@ -459,24 +500,46 @@ export class BotCore {
       asFile = true;
     }
 
+    // Everyone gets the Arabic buttons at the bottom of the chat once.
+    state.menu_users ||= [];
+    if (!state.menu_users.includes(user)) {
+      state.menu_users.push(user);
+      await this.save();
+      await this.telegram("sendMessage", { chat_id: chat, text: "👇 الأزرار دي تحت علشان تستخدم البوت بسهولة.",
+        reply_markup: MENU }).catch(() => {});
+    }
+
     if (fileId) return this.addPhoto(state, msg, fileId, asFile);
-    if ((msg.text || "").startsWith("/")) {
+    const text = msg.text || "";
+    const command = text.startsWith("/") ? text : arabicCommand(text);
+    // After tapping ✏️, the next text (that isn't a button) is the new caption.
+    if (state.editing?.user === user && text.trim() && (!command || command === "/cancel")) {
+      const piece = state.pieces.find((p) => p.id === state.editing.id);
+      state.editing = null;
+      await this.save();
+      if (command === "/cancel") return this.send(chat, "تمام، الكلام زي ما هو.");
+      if (!piece) return this.send(chat, "البوست ده مبقاش موجود.");
+      piece.caption = text.trim().slice(0, 1500);
+      await this.save();
+      return this.send(chat, `✏️ اتغير كلام بوست رقم ${piece.id}. دوس 👀 علشان تشوفه.`);
+    }
+    if (command) {
       try {
-        await this.handleCommand(state, chat, msg.text);
+        await this.handleCommand(state, chat, command, user);
       } catch (e) {
         console.log(`Command failed: ${e.message}`);
-        await this.send(chat, "في حاجة غلط في الأمر، جرب تاني.");
+        await this.send(chat, "في حاجة غلط، جرب تاني.");
       }
       return this.save();
     }
-    if ((msg.text || "").trim()) {
+    if (text.trim()) {
       // Text from the worker, like "دبل خفيفة": Gemini puts it in this piece's caption.
       state.open ||= { count: null, photos: [], files: [], note: "", from: user, asked: true };
       addNote(state.open, msg.text);
       await this.save();
       return this.send(chat, `✍️ تمام، هضيف "${state.open.note}" لكلام البوست ده.`);
     }
-    return this.send(chat, "ابعت صور القطعة، أو اكتب /help علشان تشوف الأوامر.");
+    return this.send(chat, "ابعت صور القطعة، أو دوس ❓ مساعدة.");
   }
 
   // ---- "How many photos?" ----
@@ -497,8 +560,29 @@ export class BotCore {
     const count = Number((query.data || "").split(":")[1]);
     await this.telegram("answerCallbackQuery", { callback_query_id: query.id }).catch(() => {});
     if (!this.allowedUsers().includes(query.from.id) || !chat) return;
-    if ((query.data || "").startsWith("rewrite:")) {
-      return this.rewrite(state, chat, Number(query.data.split(":")[1]));
+    const [action, arg] = (query.data || "").split(":");
+    const id = Number(arg);
+    const piece = state.pieces.find((p) => p.id === id);
+    if (["rewrite", "preview", "edit", "delete", "delyes", "postask"].includes(action) && !piece) {
+      return this.send(chat, `مفيش بوست رقم ${arg} دلوقتي.`);
+    }
+    if (action === "rewrite") return this.rewrite(state, chat, id);
+    if (action === "preview") return this.preview(state, chat, piece);
+    if (action === "postask") return this.askPostNow(chat, piece);
+    if (action === "edit") {
+      state.editing = { user: query.from.id, id };
+      await this.save();
+      return this.send(chat, `✏️ ابعت الكلام الجديد لبوست رقم ${id}.\n(أو دوس ❌ الغي الصور علشان تسيبه زي ما هو)`);
+    }
+    if (action === "delete") {
+      return this.telegram("sendMessage", { chat_id: chat, text: `🗑 تمسح بوست رقم ${id}؟`,
+        reply_markup: { inline_keyboard: [[{ text: "أيوه، امسحه", callback_data: `delyes:${id}` }]] } });
+    }
+    if (action === "delyes") {
+      state.pieces.splice(state.pieces.indexOf(piece), 1);
+      await this.save();
+      return this.telegram("editMessageText", { chat_id: chat, message_id: query.message.message_id,
+        text: `🗑 اتمسح بوست رقم ${id}.` }).catch(() => this.send(chat, `🗑 اتمسح بوست رقم ${id}.`));
     }
     if ((query.data || "").startsWith("postnow:")) {
       const id = Number(query.data.split(":")[1]);
@@ -604,10 +688,14 @@ export class BotCore {
         `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
         `🗓 هيتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
         `📝 الكلام اللي هيتكتب:\n${piece.caption}`) +
-        `\n\nلتغييره بإيدك: /caption ${piece.id} الكلام الجديد`;
+        "";
       try {
-        await this.telegram("sendMessage", { chat_id: job.chat, text: text.slice(0, 4000), reply_markup: { inline_keyboard:
-          [[{ text: "🔄 كلام تاني من Gemini", callback_data: `rewrite:${piece.id}` }]] } });
+        await this.telegram("sendMessage", { chat_id: job.chat, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [
+          [{ text: "🔄 كلام تاني من Gemini", callback_data: `rewrite:${piece.id}` },
+            { text: "✏️ اكتب بإيدك", callback_data: `edit:${piece.id}` }],
+          [{ text: "👀 شوفه", callback_data: `preview:${piece.id}` },
+            { text: "🗑 امسح", callback_data: `delete:${piece.id}` }],
+        ] } });
       } catch (e) {
         await this.send(job.chat, text);
       }
@@ -623,7 +711,7 @@ export class BotCore {
     if (retryLater) await this.storage.setAlarm(this.now().ms + CAPTION_RETRY_MINUTES * 60 * 1000);
   }
 
-  async handleCommand(state, chat, text) {
+  async handleCommand(state, chat, text, user) {
     const [rawCommand, ...words] = text.trim().split(/\s+/);
     const command = rawCommand.split("@")[0].toLowerCase();
     const rest = text.trim().slice(rawCommand.length).trim();
@@ -631,14 +719,15 @@ export class BotCore {
     const find = (n) => state.pieces.find((p) => String(p.id) === n);
 
     if (command === "/start" || command === "/help") {
-      await this.send(chat, HELP);
-      return this.askCount(chat);
+      await this.telegram("sendMessage", { chat_id: chat, text: HELP, reply_markup: MENU }).catch(() => this.send(chat, HELP));
+      if (!state.open) await this.askCount(chat);
+      return;
     }
 
     if (command === "/rewrite") {
       const piece = rest ? find(rest) : state.pieces[0];
       if (!piece) {
-        return this.send(chat, rest ? `مفيش بوست رقم ${rest}. شوف الأرقام بـ /list` : "📭 مفيش بوستات مستنية دلوقتي.");
+        return this.send(chat, rest ? `مفيش بوست رقم ${rest}. دوس 📋 البوستات علشان تشوف الأرقام.` : "📭 مفيش بوستات مستنية دلوقتي.");
       }
       return this.rewrite(state, chat, piece.id);
     }
@@ -647,11 +736,9 @@ export class BotCore {
       const piece = rest ? find(rest) : state.pieces[0];
       if (!piece) {
         return this.send(chat, state.pieces.length
-          ? "مفيش بوست بالرقم ده. شوف الأرقام بـ /list" : "📭 مفيش بوستات مستنية دلوقتي.");
+          ? "مفيش بوست بالرقم ده. دوس 📋 البوستات علشان تشوف الأرقام." : "📭 مفيش بوستات مستنية دلوقتي.");
       }
-      return this.telegram("sendMessage", { chat_id: chat,
-        text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوستات الساعة 3 و10)`,
-        reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
+      return this.askPostNow(chat, piece);
     }
 
     if (command === "/reset") {
@@ -662,6 +749,7 @@ export class BotCore {
 
     if (command === "/cancel") {
       state.open = null;
+      state.editing = null;
       await this.send(chat, "❌ اتلغت الصور اللي كانت لسه بتتبعت.");
       return this.askCount(chat);
     }
@@ -674,12 +762,21 @@ export class BotCore {
         const first = (p.caption || p.note || "").split("\n")[0].slice(0, 50);
         lines.push(`\nرقم ${p.id} – ${p.photos.length} صورة – ${times[p.id]}\n${first}`);
       }
-      return this.send(chat, lines.join("\n"));
+      // A row of buttons for each post (Telegram allows up to 100 buttons, so at most 15 posts get them).
+      const rows = state.pieces.slice(0, 15).flatMap((p) => [
+        [{ text: `── بوست رقم ${p.id} ──`, callback_data: `preview:${p.id}` }],
+        [{ text: "👀", callback_data: `preview:${p.id}` }, { text: "🔄", callback_data: `rewrite:${p.id}` },
+          { text: "✏️", callback_data: `edit:${p.id}` }, { text: "🗑", callback_data: `delete:${p.id}` },
+          { text: "🚀", callback_data: `postask:${p.id}` }],
+      ]);
+      lines.push("\n👀 شوف · 🔄 كلام تاني · ✏️ اكتب بإيدك · 🗑 امسح · 🚀 انشر دلوقتي");
+      return this.telegram("sendMessage", { chat_id: chat, text: lines.join("\n").slice(0, 4000),
+        reply_markup: { inline_keyboard: rows } }).catch(() => this.send(chat, lines.join("\n")));
     }
 
     if (command === "/delete") {
       const piece = find(rest);
-      if (!piece) return this.send(chat, "اكتب رقم القطعة بعد الأمر، مثلاً: /delete 5\nشوف الأرقام بـ /list");
+      if (!piece) return this.send(chat, "اكتب رقم البوست، مثلاً: امسح 5\nدوس 📋 البوستات علشان تشوف الأرقام.");
       state.pieces.splice(state.pieces.indexOf(piece), 1);
       return this.send(chat, `🗑 اتمسح بوست رقم ${piece.id}.`);
     }
@@ -687,27 +784,19 @@ export class BotCore {
     if (command === "/caption") {
       const piece = find(words[0] || "");
       const newText = rest.slice((words[0] || "").length).trim();
-      if (!piece || !newText) return this.send(chat, "اكتبها كده: /caption 5 الكلام الجديد");
+      if (!piece || !newText) return this.send(chat, "دوس ✏️ تحت البوست في 📋 البوستات، وابعت الكلام الجديد.");
       piece.caption = newText.slice(0, 1500);
       return this.send(chat, `✏️ اتغير كلام بوست رقم ${piece.id}.`);
     }
 
     if (command === "/preview") {
       if (!state.pieces.length) return this.send(chat, "📭 مفيش بوستات مستنية دلوقتي.");
-      const piece = state.pieces[0];
-      if (!piece.caption) {
-        // Write it in the background first (Gemini can be slow), then the user asks again.
-        if (!(state.to_caption || []).some((t) => t.id === piece.id)) {
-          state.to_caption = [...(state.to_caption || []), { id: piece.id, chat }];
-          await this.storage.setAlarm(this.now().ms);
-        }
-        return this.send(chat, "⏳ بكتب كلام البوست ده… ابعت /preview تاني بعد دقيقة.");
-      }
-      return this.sendPreview(chat, piece,
-        `👀 ده البوست الجاي (بوست رقم ${piece.id} – ${pieceSchedule(state, now)[piece.id]}):`);
+      const piece = rest ? find(rest) : state.pieces[0];
+      if (!piece) return this.send(chat, `مفيش بوست رقم ${rest}.`);
+      return this.preview(state, chat, piece);
     }
 
-    return this.send(chat, "مش فاهم الأمر ده 🙂\n\n" + HELP);
+    return this.send(chat, "مش فاهم ده 🙂 دوس ❓ مساعدة.");
   }
 
   // ---- Facebook ----
@@ -824,6 +913,26 @@ export class BotCore {
     } catch (e) {
       console.log(`Could not send the story preview: ${e.message}`);
     }
+  }
+
+  async preview(state, chat, piece) {
+    if (!piece.caption) {
+      // Write it in the background first (Gemini can be slow), then the user asks again.
+      if (!(state.to_caption || []).some((t) => t.id === piece.id)) {
+        state.to_caption = [...(state.to_caption || []), { id: piece.id, chat, preview: true }];
+        await this.save();
+        await this.storage.setAlarm(this.now().ms);
+      }
+      return this.send(chat, "⏳ بكتب كلام البوست ده… دوس 👀 تاني بعد دقيقة.");
+    }
+    const when = pieceSchedule(state, this.now())[piece.id];
+    return this.sendPreview(chat, piece, `👀 بوست رقم ${piece.id} – ${when}:`);
+  }
+
+  askPostNow(chat, piece) {
+    return this.telegram("sendMessage", { chat_id: chat,
+      text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوستات الساعة 3 و10)`,
+      reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
   }
 
   async rewrite(state, chat, id) {

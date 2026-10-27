@@ -3,7 +3,7 @@
 // Unlike test.js, a failing scenario doesn't stop the rest: you get a full list at the end.
 
 import assert from "node:assert/strict";
-import { BotCore, CONTACT, cairoTime, cleanCaption } from "../src/core.js";
+import { BotCore, CONTACT, arabicCommand, cairoTime, cleanCaption } from "../src/core.js";
 
 const OWNER = 111, HEMA = 222, STRANGER = 999;
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
@@ -23,7 +23,8 @@ function makeBot({ facebook = true, names = true } = {}) {
       const p = options.body instanceof FormData
         ? Object.fromEntries([...options.body.entries()].map(([k, v]) => [k, k === "media" ? JSON.parse(v) : v]))
         : JSON.parse(options.body);
-      if (method === "sendMessage") w.sent.push({ chat: p.chat_id, text: p.text, buttons: p.reply_markup?.inline_keyboard?.flat() || [] });
+      if (method === "sendMessage") w.sent.push({ chat: p.chat_id, text: p.text,
+        buttons: p.reply_markup?.inline_keyboard?.flat() || [], menu: p.reply_markup?.keyboard?.flat().map((b) => b.text) });
       else if (method === "getFile") return json({ ok: true, result: { file_path: "p.jpg" } });
       else w.media.push({ method, p });
       return json({ ok: true, result: {} });
@@ -137,7 +138,7 @@ await scenario("/start shows the help and the 1–5 buttons", async () => {
   const w = makeBot();
   await w.msg(HEMA, { text: "/start" });
   const ask = w.sent.find((s) => s.text.includes("كام صورة للبوست الجاي"));
-  assert.ok(w.has(HEMA, "/postnow"));
+  assert.ok(w.has(HEMA, "🚀 انشر دلوقتي"));
   assert.deepEqual(ask.buttons.map((b) => b.text), ["1", "2", "3", "4", "5"]);
 });
 
@@ -507,7 +508,7 @@ await scenario("/reset asks first; only the button empties the queue; numbering 
 await scenario("Unknown command → help; bad button data → nothing happens", async () => {
   const w = makeBot();
   await w.msg(HEMA, { text: "/blabla" });
-  assert.ok(w.has(HEMA, "مش فاهم الأمر ده"));
+  assert.ok(w.has(HEMA, "مش فاهم ده"));
   await w.tap(HEMA, "count:99");
   await w.tap(HEMA, "count:abc");
   await w.tap(HEMA, "");
@@ -518,6 +519,119 @@ await scenario("Commands work with the bot's name after them (/list@Bot) and in 
   const w = makeBot();
   await w.msg(HEMA, { text: "/LIST@ElsalamPiecesBot" });
   assert.ok(w.has(HEMA, "مفيش بوستات مستنية"));
+});
+
+// ---------------- Arabic buttons and words ----------------
+
+await scenario("The Arabic buttons are sent once to each person, at the bottom of the chat", async () => {
+  const w = makeBot();
+  await w.msg(HEMA, { text: "دبل" });
+  await w.msg(HEMA, { text: "خفيفه" });
+  const menus = w.sent.filter((s) => s.chat === HEMA && s.menu);
+  assert.equal(menus.length, 1);
+  assert.deepEqual(menus[0].menu, ["📋 البوستات", "👀 البوست الجاي", "🚀 انشر دلوقتي", "❌ الغي الصور", "❓ مساعدة"]);
+});
+
+await scenario("Arabic words become commands; notes like 'دبل خفيفه' stay notes", async () => {
+  const cases = {
+    "📋 البوستات": "/list", "👀 البوست الجاي": "/preview", "🚀 انشر دلوقتي": "/postnow", "❌ الغي الصور": "/cancel",
+    "❓ مساعدة": "/help", "انشر ٣": "/postnow 3", "امسح 2": "/delete 2", "امسح البوست رقم 4": "/delete 4",
+    "كلام جديد 1": "/rewrite 1", "كلام تاني": "/rewrite", "شوف 3": "/preview 3", "امسح الكل": "/reset",
+    "إلغاء": "/cancel", "مساعدة": "/help", "البوستات اللي مستنية": "/list",
+    "دبل خفيفه": null, "حلق عيار 21": null, "امسح": null, "وزن 3 جرام": null, "انشر بكرة": null,
+  };
+  for (const [text, expected] of Object.entries(cases)) assert.equal(arabicCommand(text), expected, text);
+});
+
+await scenario("Tapping 📋 البوستات lists posts with 👀 🔄 ✏️ 🗑 🚀 buttons under each", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  await w.msg(HEMA, { text: "📋 البوستات" });
+  const list = w.sent.find((s) => s.text.startsWith("🗂"));
+  const data = list.buttons.map((b) => b.callback_data);
+  for (const d of ["preview:1", "rewrite:1", "edit:1", "delete:1", "postask:1", "postask:2"]) assert.ok(data.includes(d), d);
+});
+
+await scenario("✏️ then sending text replaces the caption (and isn't taken as a note)", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "edit:1");
+  assert.ok(w.has(HEMA, "ابعت الكلام الجديد لبوست رقم 1"));
+  await w.msg(HEMA, { text: "خاتم دهب جديد ✨" });
+  assert.equal(w.pieces()[0].caption, "خاتم دهب جديد ✨");
+  assert.equal(w.bot.state.open, null);
+  assert.equal(w.bot.state.editing, null);
+});
+
+await scenario("✏️ then ❌ الغي keeps the old caption", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "edit:1");
+  await w.msg(HEMA, { text: "❌ الغي الصور" });
+  assert.equal(w.pieces()[0].caption, GOOD);
+  assert.equal(w.bot.state.editing, null);
+});
+
+await scenario("While Hema edits, the owner's text is still a note (editing belongs to one person)", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "edit:1");
+  await w.msg(OWNER, { text: "عيار 18" });
+  assert.equal(w.pieces()[0].caption, GOOD);
+  assert.equal(w.bot.state.open.note, "عيار 18");
+});
+
+await scenario("🗑 asks first; 'أيوه امسحه' deletes; pressing it again says it's gone", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.tap(HEMA, "delete:1");
+  assert.equal(w.pieces().length, 1);
+  await w.tap(HEMA, "delyes:1");
+  assert.equal(w.pieces().length, 0);
+  await w.tap(HEMA, "delyes:1");
+  assert.ok(w.has(HEMA, "مفيش بوست رقم 1"));
+});
+
+await scenario("🚀 under a post asks, then the confirm button posts that post", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  await w.tap(HEMA, "postask:2");
+  assert.ok(w.has(HEMA, "تنشر بوست رقم 2"));
+  assert.equal(w.fb.length, 0);
+  await w.tap(HEMA, "postnow:2");
+  assert.deepEqual(w.pieces().map((p) => p.id), [1]);
+});
+
+await scenario("Typed Arabic works end to end: 'انشر 1', 'امسح 2', 'شوف 3', 'كلام جديد 3'", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece(); await w.addPiece();
+  await w.msg(HEMA, { text: "انشر 1" });
+  assert.ok(w.has(HEMA, "تنشر بوست رقم 1"));
+  await w.msg(HEMA, { text: "امسح 2" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [1, 3]);
+  await w.msg(HEMA, { text: "شوف 3" });
+  assert.ok(w.media.some((m) => m.method === "sendPhoto"));
+  w.gemini = ["✨ كلام مختلف خالص 💛\nمجوهرات السلام"];
+  await w.msg(HEMA, { text: "كلام جديد 3" });
+  assert.equal(w.pieces()[1].caption, "✨ كلام مختلف خالص 💛\nمجوهرات السلام");
+});
+
+await scenario("The ready message has 🔄 ✏️ 👀 🗑 buttons", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  const ready = w.sent.find((s) => s.text.includes("جاهز"));
+  assert.deepEqual(ready.buttons.map((b) => b.callback_data), ["rewrite:1", "edit:1", "preview:1", "delete:1"]);
+});
+
+await scenario("No message to the worker mentions a / command anymore", async () => {
+  const w = makeBot();
+  await w.msg(HEMA, { text: "/start" });
+  await w.addPiece();
+  await w.msg(HEMA, { text: "📋 البوستات" });
+  await w.msg(HEMA, { text: "امسح 9" });
+  await w.msg(HEMA, { text: "/caption" });
+  await w.msg(HEMA, { text: "شوف 9" });
+  for (const t of w.texts(HEMA)) assert.ok(!/\/(list|preview|caption|delete|rewrite|postnow|help)/.test(t), t);
 });
 
 // ---------------- Posting on time ----------------
