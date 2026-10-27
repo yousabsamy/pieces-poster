@@ -11,7 +11,8 @@ const GOOD = "✨ حلق دهب رقيق 💛\nتفاصيل ناعمة ولمع�
 
 function makeBot({ facebook = true, names = true } = {}) {
   const w = {
-    sent: [], media: [], fb: [], prompts: [], store: new Map(), alarm: false, clock: 0, updateId: 0,
+    sent: [], media: [], fb: [], prompts: [], assistantPrompts: [], store: new Map(), alarm: false, clock: 0, updateId: 0,
+    assistant: [null],       // the assistant's answers ({reply, actions}); null = Gemini down -> text becomes a note
     gemini: [GOOD],          // answers in order; the last one repeats. null = busy (503), "BAD" = unusable text
     fbFail: false, fbFailPath: null,
   };
@@ -30,7 +31,14 @@ function makeBot({ facebook = true, names = true } = {}) {
       return json({ ok: true, result: {} });
     }
     if (url.includes("generativelanguage")) {
-      w.prompts.push(JSON.parse(options.body).contents[0].parts[0].text);
+      const body = JSON.parse(options.body);
+      if (body.generationConfig?.responseMimeType === "application/json") {    // the assistant
+        w.assistantPrompts.push(body.contents[0].parts[0].text);
+        const a = w.assistant.length > 1 ? w.assistant.shift() : w.assistant[0];
+        if (a === null) return json({ error: "busy" }, 503);
+        return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(a) }] } }] });
+      }
+      w.prompts.push(body.contents[0].parts[0].text);
       const answer = w.gemini.length > 1 ? w.gemini.shift() : w.gemini[0];
       if (answer === null) return json({ error: "busy" }, 503);
       return json({ candidates: [{ content: { parts: [{ text: answer }] } }] });
@@ -138,7 +146,7 @@ await scenario("/start shows the help and the 1–5 buttons", async () => {
   const w = makeBot();
   await w.msg(HEMA, { text: "/start" });
   const ask = w.sent.find((s) => s.text.includes("كام صورة للبوست الجاي"));
-  assert.ok(w.has(HEMA, "🚀 انشر دلوقتي"));
+  assert.ok(w.has(HEMA, "اكتبها عادي بالعربي"));
   assert.deepEqual(ask.buttons.map((b) => b.text), ["1", "2", "3", "4", "5"]);
 });
 
@@ -433,11 +441,12 @@ await scenario("/rewrite and the 🔄 button give a new caption; if Gemini is do
   assert.ok(w.has(HEMA, "مفيش بوست رقم 7"));
 });
 
-await scenario("Every ready message has the 🔄 button", async () => {
+await scenario("After a 🔄/🪄 rewrite the whole post is shown again (photos + new caption)", async () => {
   const w = makeBot();
   await w.addPiece();
-  const ready = w.sent.find((s) => s.text.includes("جاهز"));
-  assert.equal(ready.buttons[0].callback_data, "rewrite:1");
+  w.media = [];
+  await w.tap(HEMA, "rewrite:1");
+  assert.ok(w.media.some((m) => m.method === "sendPhoto" && m.p.caption.startsWith(GOOD)));
 });
 
 await scenario("/preview: empty, then the first post with photos and full caption (logo + contact)", async () => {
@@ -529,7 +538,7 @@ await scenario("The Arabic buttons are sent once to each person, at the bottom o
   await w.msg(HEMA, { text: "خفيفه" });
   const menus = w.sent.filter((s) => s.chat === HEMA && s.menu);
   assert.equal(menus.length, 1);
-  assert.deepEqual(menus[0].menu, ["📋 البوستات", "👀 البوست الجاي", "🚀 انشر دلوقتي", "❌ الغي الصور", "❓ مساعدة"]);
+  assert.deepEqual(menus[0].menu, ["📋 البوستات", "👀 البوست الجاي", "❓ مساعدة"]);
 });
 
 await scenario("Arabic words become commands; notes like 'دبل خفيفه' stay notes", async () => {
@@ -543,13 +552,15 @@ await scenario("Arabic words become commands; notes like 'دبل خفيفه' sta
   for (const [text, expected] of Object.entries(cases)) assert.equal(arabicCommand(text), expected, text);
 });
 
-await scenario("Tapping 📋 البوستات lists posts with 👀 🔄 ✏️ 🗑 🚀 buttons under each", async () => {
+await scenario("📋 البوستات: one 👀 button per post; it shows the post with ⬆️ 🚀 🪄 🗑 options", async () => {
   const w = makeBot();
   await w.addPiece(); await w.addPiece();
   await w.msg(HEMA, { text: "📋 البوستات" });
   const list = w.sent.find((s) => s.text.startsWith("🗂"));
-  const data = list.buttons.map((b) => b.callback_data);
-  for (const d of ["preview:1", "rewrite:1", "edit:1", "delete:1", "postask:1", "postask:2"]) assert.ok(data.includes(d), d);
+  assert.deepEqual(list.buttons.map((b) => b.callback_data), ["preview:1", "preview:2"]);
+  await w.tap(HEMA, "preview:2");
+  const options = w.sent.find((s) => s.text.includes("تحب تعمل إيه"));
+  assert.deepEqual(options.buttons.map((b) => b.callback_data), ["first:2", "postask:2", "guide:2", "delete:2"]);
 });
 
 await scenario("✏️ then sending text replaces the caption (and isn't taken as a note)", async () => {
@@ -616,11 +627,12 @@ await scenario("Typed Arabic works end to end: 'انشر 1', 'امسح 2', 'شو
   assert.equal(w.pieces()[1].caption, "✨ كلام مختلف خالص 💛\nمجوهرات السلام");
 });
 
-await scenario("The ready message has 🔄 ✏️ 👀 🗑 buttons", async () => {
+await scenario("The ready message is simple: the caption, one 👀 button, and 'just write it'", async () => {
   const w = makeBot();
   await w.addPiece();
   const ready = w.sent.find((s) => s.text.includes("جاهز"));
-  assert.deepEqual(ready.buttons.map((b) => b.callback_data), ["rewrite:1", "guide:1", "edit:1", "preview:1", "delete:1"]);
+  assert.deepEqual(ready.buttons.map((b) => b.callback_data), ["preview:1"]);
+  assert.ok(ready.text.includes("اكتبها عادي"));
 });
 
 await scenario("No message to the worker mentions a / command anymore", async () => {
@@ -675,6 +687,175 @@ await scenario("An edit note may ask for a price/karat (allowed), and recent cap
   const prompt = w.prompts.at(-1);
   assert.ok(prompt.includes("Follow the request even if it asks to mention a price, weight, karat"));
   assert.ok(prompt.includes("don't repeat these recent captions:\n(none)"));
+});
+
+// ---------------- The assistant (Gemini understands what they write) ----------------
+
+await scenario("Assistant: 'خلي بوست الخاتم يتنشر الجاي' moves it first and shows the new order", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece(); await w.addPiece();
+  w.assistant = [{ reply: "تمام، هخلي بوست الخاتم هو الجاي 👍", actions: [{ type: "move", post: 3, position: 1 }] }];
+  await w.msg(HEMA, { text: "خلي بوست الخاتم يتنشر الجاي" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [3, 1, 2]);
+  assert.ok(w.has(HEMA, "هخلي بوست الخاتم"));
+  const order = w.texts(HEMA).find((t) => t.startsWith("🗓 تمام، ده الترتيب الجديد"));
+  assert.match(order, /1\. بوست 3 – النهارده الساعة 3 مساءً/);
+});
+
+await scenario("Assistant: 'بكرة الساعة 10' → position 4; the prompt lists posting times and posts", async () => {
+  const w = makeBot();
+  for (let i = 0; i < 4; i++) await w.addPiece();
+  w.assistant = [{ reply: "تمام", actions: [{ type: "move", post: 1, position: 4 }] }];
+  await w.msg(HEMA, { text: "خلي بوست 1 يتنشر بكرة الساعة 10" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [2, 3, 4, 1]);
+  const prompt = w.assistantPrompts.at(-1);
+  assert.ok(prompt.includes("4: بكرة الساعة 10 مساءً"));
+  assert.ok(prompt.includes("1. بوست 1 – 1 صورة"));
+  assert.ok(prompt.includes("«خلي بوست 1 يتنشر بكرة الساعة 10»"));
+});
+
+await scenario("Assistant: 'انشر بوست الحلق دلوقتي' only asks to confirm; nothing is posted yet", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  w.assistant = [{ reply: "حاضر", actions: [{ type: "post_now", post: 2 }] }];
+  await w.msg(HEMA, { text: "انشر بوست الحلق دلوقتي" });
+  assert.ok(w.has(HEMA, "تنشر بوست رقم 2"));
+  assert.equal(w.fb.length, 0);
+  assert.equal(w.pieces().length, 2);
+});
+
+await scenario("Assistant: 'امسح بوست الحلق' only asks to confirm; nothing is deleted yet", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "delete", post: 1 }] }];
+  await w.msg(HEMA, { text: "امسح بوست الحلق" });
+  assert.ok(w.has(HEMA, "تمسح بوست رقم 1"));
+  assert.equal(w.pieces().length, 1);
+});
+
+await scenario("Assistant: 'غير كلام البوست الجاي وخليه أقصر' → Gemini edits it and the post is shown", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.assistant = [{ reply: "حاضر، هخليه أقصر", actions: [{ type: "rewrite", post: 1, text: "خليه أقصر" }] }];
+  w.gemini = ["✨ حلق رقيق 💛\nمجوهرات السلام"];
+  w.media = [];
+  await w.msg(HEMA, { text: "غير كلام البوست الجاي وخليه أقصر" });
+  assert.equal(w.pieces()[0].caption, "✨ حلق رقيق 💛\nمجوهرات السلام");
+  assert.ok(w.prompts.at(-1).includes("خليه أقصر"));
+  assert.ok(w.media.some((m) => m.method === "sendPhoto"));
+});
+
+await scenario("Assistant: 'دبل خفيفه' is understood as a note for the photos being sent", async () => {
+  const w = makeBot();
+  w.assistant = [{ reply: "تمام، هكتب إنها دبل خفيفة ✍️", actions: [{ type: "note", text: "دبل خفيفه" }] }];
+  await w.msg(HEMA, { text: "دبل خفيفه" });
+  await w.tap(HEMA, "count:1");
+  await w.msg(HEMA, { photo: "nn" });
+  assert.equal(w.pieces()[0].note, "دبل خفيفه");
+});
+
+await scenario("Assistant: questions get an answer and nothing changes", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.assistant = [{ reply: "فاضل بوست واحد بس، هيتنشر النهارده الساعة 3", actions: [{ type: "none" }] }];
+  await w.msg(OWNER, { text: "كام بوست فاضل؟" });
+  assert.ok(w.has(OWNER, "فاضل بوست واحد"));
+  assert.equal(w.pieces().length, 1);
+  assert.equal(w.bot.state.open, null);
+});
+
+await scenario("Assistant: a post number that doesn't exist is reported, nothing breaks", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "move", post: 9, position: 1 }, { type: "preview" }] }];
+  await w.msg(HEMA, { text: "خلي بوست 9 الأول" });
+  assert.ok(w.has(HEMA, "مش لاقي بوست رقم 9"));
+  assert.ok(w.has(HEMA, "مش متأكد قصدك أنهي بوست"));
+  assert.deepEqual(w.pieces().map((p) => p.id), [1]);
+});
+
+await scenario("Assistant: set_caption replaces the caption and shows the post", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "set_caption", post: 1, text: "سلسلة دهب رقيقة ✨" }] }];
+  w.media = [];
+  await w.msg(HEMA, { text: "خلي كلام بوست 1: سلسلة دهب رقيقة ✨" });
+  assert.equal(w.pieces()[0].caption, "سلسلة دهب رقيقة ✨");
+  assert.ok(w.media.length > 0);
+});
+
+await scenario("Assistant: a position way too big or 0 is kept inside the list", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "move", post: 1, position: 99 }] }];
+  await w.msg(HEMA, { text: "خلي بوست 1 الآخر" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [2, 1]);
+  w.assistant = [{ reply: "", actions: [{ type: "move", post: 1, position: 0 }] }];
+  await w.msg(HEMA, { text: "خلي بوست 1 الأول" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [1, 2]);
+});
+
+await scenario("Assistant: never deletes everything without the confirm button", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "reset" }, { type: "delete", post: 1 }, { type: "delete", post: 2 }] }];
+  await w.msg(HEMA, { text: "امسح كل حاجة" });
+  assert.equal(w.pieces().length, 2);
+  assert.ok(w.has(HEMA, "متأكد إنك عايز تمسح كل البوستات"));
+});
+
+await scenario("Assistant down (Gemini busy) → the text is kept as a note, like before", async () => {
+  const w = makeBot();
+  w.assistant = [null];
+  await w.msg(HEMA, { text: "حلق خفيف" });
+  assert.ok(w.has(HEMA, 'هضيف "حلق خفيف"'));
+  assert.equal(w.bot.state.open.note, "حلق خفيف");
+});
+
+await scenario("Assistant answer that isn't valid JSON → treated as a note", async () => {
+  const w = makeBot();
+  w.assistant = ["not json"];
+  await w.msg(HEMA, { text: "خاتم" });
+  assert.equal(w.bot.state.open.note, "خاتم");
+});
+
+await scenario("Assistant: a swap ('بوست 2 الساعة 3 والأول بالليل') works whatever order the moves come in", async () => {
+  for (const actions of [
+    [{ type: "move", post: 2, position: 1 }, { type: "move", post: 1, position: 2 }],
+    [{ type: "move", post: 1, position: 2 }, { type: "move", post: 2, position: 1 }],
+  ]) {
+    const w = makeBot();
+    await w.addPiece(); await w.addPiece(); await w.addPiece();
+    w.assistant = [{ reply: "تمام", actions }];
+    await w.msg(HEMA, { text: "خلي بوست 2 يتنشر الساعة 3 والأول بالليل" });
+    assert.deepEqual(w.pieces().map((p) => p.id), [2, 1, 3]);
+  }
+});
+
+await scenario("Assistant: moving 3 posts at once to new places", async () => {
+  const w = makeBot();
+  for (let i = 0; i < 5; i++) await w.addPiece();
+  w.assistant = [{ reply: "", actions: [{ type: "move", post: 5, position: 1 }, { type: "move", post: 4, position: 2 },
+    { type: "move", post: 1, position: 5 }] }];
+  await w.msg(HEMA, { text: "رتبهم" });
+  assert.deepEqual(w.pieces().map((p) => p.id), [5, 4, 2, 3, 1]);
+});
+
+await scenario("⬆️ خليه الجاي under a post moves it first and shows the order", async () => {
+  const w = makeBot();
+  await w.addPiece(); await w.addPiece(); await w.addPiece();
+  await w.tap(HEMA, "first:3");
+  assert.deepEqual(w.pieces().map((p) => p.id), [3, 1, 2]);
+  assert.ok(w.has(HEMA, "بوست رقم 3 هو اللي هيتنشر الجاي"));
+});
+
+await scenario("After moving, the 3 PM post is the moved one", async () => {
+  const w = makeBot();
+  await w.addPiece(HEMA, 1, "first"); await w.addPiece(HEMA, 1, "second");
+  await w.tap(HEMA, "first:2");
+  w.at(15); await w.tick();
+  assert.ok(w.fb[0].fields.caption);
+  assert.deepEqual(w.pieces().map((p) => p.id), [1]);
 });
 
 // ---------------- Posting on time ----------------

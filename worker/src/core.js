@@ -22,6 +22,8 @@ const MAX_PHOTOS_PER_POST = 10;
 // Tried in this order (all available on the free key, Oct 2026). Busy or missing ones are skipped.
 const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite",
   "gemini-flash-lite-latest"];
+// For understanding what people write (text only, so the quick models go first).
+const ASSISTANT_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"];
 const CAPTION_RETRIES = 5;           // if Gemini is busy, try again this many times...
 const CAPTION_RETRY_MINUTES = 3;     // ...this many minutes apart, before using a ready-made caption
 const FB_API_VERSION = "v26.0";
@@ -105,26 +107,82 @@ const GEMINI_PROMPT =
   "{note}" +
   "Reply with the caption only, nothing else.";
 
+// What Gemini is told when someone writes to the bot in their own words.
+const ASSISTANT_PROMPT = `You are the assistant inside the Telegram bot of ${"مجوهرات السلام"}, a gold jewelry shop in Egypt.
+The shop's worker or owner writes to you in Egyptian Arabic. The bot keeps a queue of jewelry posts and publishes
+one post at each posting time (3 PM and 10 PM Cairo time) on Facebook. Understand what they want and answer in JSON.
+
+Cairo time now: {now}
+Upcoming posting times (position: time): {slots}
+Posts waiting, in posting order (position. post number – photos – when – caption start – worker's note):
+{posts}
+Photos being sent right now (not a post yet): {open}
+
+The message: «{text}»
+
+Actions you can use (put them in "actions", in order):
+- note: the message describes the piece whose photos are being sent or will be sent next, e.g. "دبل خفيفه",
+  "عيار 21", "هدية لعيد الأم". text = the note.
+- preview: show a post. post = its number.
+- move: change when a post goes out. post = its number, position = its new place (1 = the next one to be posted).
+  Use the upcoming posting times to turn things like "بكرة الساعة 10" or "النهارده العصر" into a position.
+- post_now: post it right now (the bot asks to confirm first). post = its number.
+- delete: delete a post (the bot asks to confirm first). post = its number.
+- rewrite: write the caption again. post = its number, text = what to change (e.g. "خليه أقصر"), or empty for a
+  completely new caption.
+- set_caption: replace the caption with exactly the text they gave. post, text.
+- cancel_photos: cancel the photos being sent right now.
+- list: show all waiting posts.
+- reset: delete ALL waiting posts (the bot asks to confirm first).
+- none: nothing to do (questions like "كام بوست فاضل؟", greetings, thanks). Answer in reply.
+
+Find posts by number ("بوست 3"), by place ("البوست الجاي" = position 1, "آخر بوست" = the last one), or by the piece
+in its caption or note ("بوست الخاتم", "الحلق"). If you're not sure which post they mean, use none and ask in reply.
+"reply" is a short, friendly Egyptian Arabic message: what you understood and are doing, or the answer to the
+question. Don't say a post was deleted or posted, because the bot asks to confirm first. Never invent posts.`;
+
+const ASSISTANT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    reply: { type: "STRING" },
+    actions: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          type: { type: "STRING", enum: ["note", "preview", "move", "post_now", "delete", "rewrite", "set_caption",
+            "cancel_photos", "list", "reset", "none"] },
+          post: { type: "INTEGER" },
+          position: { type: "INTEGER" },
+          text: { type: "STRING" },
+        },
+        required: ["type"],
+      },
+    },
+  },
+  required: ["reply", "actions"],
+};
+
 const HELP =
   "أهلاً 👋\n" +
   "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
-  "• قبل كل قطعة هسألك: كام صورة؟ دوس على الرقم، وبعدين ابعت الصور.\n" +
-  "• الصور دي كلها هتتنشر في بوست واحد، والكلام هيتكتب لوحده.\n" +
-  "• لو عايز تقول حاجة عن القطعة (زي: دبل خفيفة) اكتبها، وهتتحط في الكلام.\n" +
-  "• كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
-  "الأزرار اللي تحت 👇\n" +
-  "📋 البوستات – كل البوستات اللي مستنية، وتحت كل واحد أزرار (شوف، كلام تاني، عدّل بـ Gemini، اكتب بإيدك، امسح، انشر)\n" +
-  "👀 البوست الجاي – شوفه بالظبط زي ما هيتنشر\n" +
-  "🚀 انشر دلوقتي – انشر البوست الجاي حالاً\n" +
-  "❌ الغي الصور – الغي الصور اللي لسه بتتبعت\n\n" +
-  "🪄 عدّل بـ Gemini: قوله يغير إيه (مثلاً: خليه أقصر، اذكر إنه هدية).\n\n" +
-  "وممكن تكتب كمان: امسح 3 – انشر 2 – كلام جديد 1 – عدل 1 – شوف 4 – امسح الكل";
+  "📸 قبل كل قطعة هسألك كام صورة. دوس على الرقم، وبعدين ابعت الصور.\n" +
+  "🗓 كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
+  "💬 وأي حاجة عايزها اكتبها عادي بالعربي، وأنا هفهم وأعملها. مثلاً:\n" +
+  "• دبل خفيفه (معلومة عن القطعة)\n" +
+  "• خلي بوست الخاتم يتنشر بكرة الساعة 10\n" +
+  "• انشر البوست الجاي دلوقتي\n" +
+  "• غير كلام بوست 3 وخليه أقصر\n" +
+  "• امسح بوست الحلق\n" +
+  "• كام بوست فاضل؟\n\n" +
+  "👇 والأزرار اللي تحت:\n" +
+  "📋 البوستات – كل البوستات اللي مستنية\n" +
+  "👀 البوست الجاي – شوفه بالظبط زي ما هيتنشر";
 
 // The buttons that stay at the bottom of the chat. Tapping one sends its text, which the bot understands.
 const MENU = {
   keyboard: [
     [{ text: "📋 البوستات" }, { text: "👀 البوست الجاي" }],
-    [{ text: "🚀 انشر دلوقتي" }, { text: "❌ الغي الصور" }],
     [{ text: "❓ مساعدة" }],
   ],
   resize_keyboard: true,
@@ -549,11 +607,12 @@ export class BotCore {
       return this.save();
     }
     if (text.trim()) {
-      // Text from the worker, like "دبل خفيفة": Gemini puts it in this piece's caption.
-      state.open ||= { count: null, photos: [], files: [], note: "", from: user, asked: true };
-      addNote(state.open, msg.text);
+      // Anything else they write is understood by Gemini in the background (it can take a few seconds).
+      state.assistant = [...(state.assistant || []), { user, chat, text: text.trim().slice(0, 500) }];
       await this.save();
-      return this.send(chat, `✍️ تمام، هضيف "${state.open.note}" لكلام البوست ده.`);
+      await this.storage.setAlarm(this.now().ms);
+      await this.telegram("sendChatAction", { chat_id: chat, action: "typing" }).catch(() => {});
+      return;
     }
     return this.send(chat, "ابعت صور القطعة، أو دوس ❓ مساعدة.");
   }
@@ -579,7 +638,7 @@ export class BotCore {
     const [action, arg] = (query.data || "").split(":");
     const id = Number(arg);
     const piece = state.pieces.find((p) => p.id === id);
-    if (["rewrite", "preview", "edit", "guide", "delete", "delyes", "postask"].includes(action) && !piece) {
+    if (["rewrite", "preview", "edit", "guide", "delete", "delyes", "postask", "first"].includes(action) && !piece) {
       return this.send(chat, `مفيش بوست رقم ${arg} دلوقتي.`);
     }
     if (action === "rewrite") return this.rewrite(state, chat, id);
@@ -592,9 +651,11 @@ export class BotCore {
       await this.save();
       return this.send(chat, `✏️ ابعت الكلام الجديد لبوست رقم ${id}.\n(أو دوس ❌ الغي الصور علشان تسيبه زي ما هو)`);
     }
-    if (action === "delete") {
-      return this.telegram("sendMessage", { chat_id: chat, text: `🗑 تمسح بوست رقم ${id}؟`,
-        reply_markup: { inline_keyboard: [[{ text: "أيوه، امسحه", callback_data: `delyes:${id}` }]] } });
+    if (action === "delete") return this.askDelete(chat, piece);
+    if (action === "first") {
+      this.movePiece(state, piece, 1);
+      await this.save();
+      return this.sendOrder(state, chat, `⬆️ تمام، بوست رقم ${id} هو اللي هيتنشر الجاي:`);
     }
     if (action === "delyes") {
       state.pieces.splice(state.pieces.indexOf(piece), 1);
@@ -672,8 +733,159 @@ export class BotCore {
 
   async backgroundWork() {
     // The Durable Object alarm: write captions for finished pieces, then any "post now".
+    await this.runAssistant();
     await this.writePendingCaptions();
     await this.postNowConfirmed(await this.load());
+  }
+
+  // ---- The assistant: understands what people write and does it ----
+
+  async runAssistant() {
+    const state = await this.load();
+    const jobs = state.assistant || [];
+    if (!jobs.length) return;
+    state.assistant = [];
+    await this.save();
+    for (const job of jobs) {
+      const result = await this.understand(state, job);
+      if (!result) {
+        // Gemini is down: treat it as a note about the piece, like before.
+        state.open ||= { count: null, photos: [], files: [], note: "", from: job.user, asked: true };
+        addNote(state.open, job.text);
+        await this.save();
+        await this.send(job.chat, `✍️ تمام، هضيف "${state.open.note}" لكلام البوست ده.`);
+        continue;
+      }
+      await this.doActions(state, job, result);
+    }
+  }
+
+  async understand(state, job) {
+    const now = this.now();
+    const slots = upcomingSlots(state, now, Math.max(state.pieces.length + 2, 4));
+    const times = pieceSchedule(state, now);
+    const posts = state.pieces.map((p, i) =>
+      `${i + 1}. بوست ${p.id} – ${p.photos.length} صورة – ${times[p.id]} – ${(p.caption || "").split("\n")[0].slice(0, 60)}` +
+      ` – ${p.note || ""}`).join("\n") || "(none)";
+    const open = state.open ? `${state.open.photos.length} photo(s) so far` +
+      (state.open.count ? ` of ${state.open.count}` : "") + (state.open.note ? `, note: ${state.open.note}` : "") : "none";
+    const prompt = ASSISTANT_PROMPT.replace("{now}", `${now.date} ${now.hour}:${String(now.minute).padStart(2, "0")}`)
+      .replace("{slots}", slots.map((sl, i) => `${i + 1}: ${whenText(sl, now)}`).join(", "))
+      .replace("{posts}", posts).replace("{open}", open).replace("{text}", job.text);
+    const result = await this.geminiJSON(prompt, ASSISTANT_SCHEMA, ASSISTANT_MODELS);
+    if (!result || !Array.isArray(result.actions)) return null;
+    return result;
+  }
+
+  async geminiJSON(prompt, schema, models) {
+    const key = this.env.GEMINI_API_KEY;
+    if (!key) return null;
+    const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2, responseMimeType: "application/json", responseSchema: schema } });
+    for (const model of models) {
+      try {
+        const res = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body,
+            signal: AbortSignal.timeout(30000) });
+        if (!res.ok) {
+          console.log(`Assistant ${model} failed: ${res.status}`);
+          continue;
+        }
+        const data = await res.json();
+        const text = data.candidates[0].content.parts.filter((p) => !p.thought).map((p) => p.text || "").join("");
+        return JSON.parse(text);
+      } catch (e) {
+        console.log(`Assistant ${model} failed: ${e.name}`);
+      }
+    }
+    return null;
+  }
+
+  async doActions(state, job, result) {
+    const { chat, user } = job;
+    const find = (n) => state.pieces.find((p) => p.id === Number(n));
+    console.log(`Assistant actions: ${JSON.stringify(result.actions)}`);
+    if (result.reply?.trim()) await this.send(chat, result.reply.trim().slice(0, 1000));
+    const moves = [];            // all moves in one message are applied together (so a swap works)
+    for (const a of result.actions.slice(0, 5)) {
+      const piece = a.post ? find(a.post) : null;
+      const needsPost = ["preview", "move", "post_now", "delete", "rewrite", "set_caption"].includes(a.type);
+      if (needsPost && !piece) {
+        await this.send(chat, a.post ? `مش لاقي بوست رقم ${a.post}. دوس 📋 البوستات علشان تشوف الأرقام.` :
+          "مش متأكد قصدك أنهي بوست 🤔 اكتب رقمه، أو دوس 📋 البوستات.");
+        continue;
+      }
+      if (a.type === "note" && a.text?.trim()) {
+        state.open ||= { count: null, photos: [], files: [], note: "", from: user, asked: true };
+        addNote(state.open, a.text);
+        await this.save();
+        if (!result.reply?.trim()) await this.send(chat, `✍️ تمام، هضيف "${state.open.note}" لكلام البوست ده.`);
+      } else if (a.type === "preview") {
+        await this.preview(state, chat, piece);
+      } else if (a.type === "move") {
+        moves.push({ piece, position: a.position || 1 });
+      } else if (a.type === "post_now") {
+        await this.askPostNow(chat, piece);
+      } else if (a.type === "delete") {
+        await this.askDelete(chat, piece);
+      } else if (a.type === "rewrite") {
+        await this.rewrite(state, chat, piece.id, a.text?.trim() || null);
+      } else if (a.type === "set_caption" && a.text?.trim()) {
+        piece.caption = a.text.trim().slice(0, 1500);
+        await this.save();
+        await this.preview(state, chat, piece);
+      } else if (a.type === "cancel_photos") {
+        state.open = null;
+        await this.save();
+        await this.send(chat, "❌ اتلغت الصور اللي كانت لسه بتتبعت.");
+      } else if (a.type === "list") {
+        await this.handleCommand(state, chat, "/list", user);
+      } else if (a.type === "reset") {
+        await this.handleCommand(state, chat, "/reset", user);
+      }
+    }
+    if (moves.length) {
+      this.placePieces(state, moves);
+      await this.save();
+      await this.sendOrder(state, chat, "🗓 تمام، ده الترتيب الجديد:");
+    }
+  }
+
+  placePieces(state, moves) {
+    // Put each moved post at its new place at the same time; the other posts keep their order around them.
+    const n = state.pieces.length;
+    const slots = new Array(n).fill(null);
+    const movedIds = new Set();
+    for (const { piece, position } of moves) {
+      if (movedIds.has(piece.id)) continue;
+      let at = Math.min(Math.max(Math.round(position), 1), n) - 1;
+      while (slots[at] && at < n - 1) at++;            // two posts asked for the same place: next free one
+      while (slots[at] && at > 0) at--;
+      if (slots[at]) continue;
+      slots[at] = piece;
+      movedIds.add(piece.id);
+    }
+    const rest = state.pieces.filter((p) => !movedIds.has(p.id));
+    state.pieces = slots.map((p) => p || rest.shift());
+  }
+
+  movePiece(state, piece, position) {
+    const list = state.pieces;
+    list.splice(list.indexOf(piece), 1);
+    const at = Math.min(Math.max(Math.round(position), 1), list.length + 1) - 1;
+    list.splice(at, 0, piece);
+  }
+
+  async sendOrder(state, chat, title) {
+    const times = pieceSchedule(state, this.now());
+    const lines = state.pieces.map((p, i) =>
+      `${i + 1}. بوست ${p.id} – ${times[p.id]}\n    ${(p.caption || p.note || "").split("\n")[0].slice(0, 45)}`);
+    return this.send(chat, `${title}\n\n${lines.join("\n") || "📭 مفيش بوستات."}`);
+  }
+
+  askDelete(chat, piece) {
+    return this.telegram("sendMessage", { chat_id: chat, text: `🗑 تمسح بوست رقم ${piece.id}؟`,
+      reply_markup: { inline_keyboard: [[{ text: "أيوه، امسحه", callback_data: `delyes:${piece.id}` }]] } });
   }
 
   async writePendingCaptions() {
@@ -702,24 +914,25 @@ export class BotCore {
         }
       }
       await this.save();
-      const text = (job.rewrite ? `${job.instruction ? "🪄 عدلته زي ما قلت" : "🔄 ده كلام جديد"} لبوست رقم ${piece.id}:\n\n${piece.caption}` :
-        `${this.cheer(piece.from)}\n\n` +
+      if (job.rewrite) {
+        // Show the whole post again, so they see the new caption on the photos.
+        await this.sendPreview(job.chat, piece,
+          `${job.instruction ? "🪄 عدلته زي ما قلت" : "🔄 ده كلام جديد"} – بوست رقم ${piece.id}:`);
+        await this.sendOptions(job.chat, piece);
+        continue;
+      }
+      const text = `${this.cheer(piece.from)}\n\n` +
         `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
         `🗓 هيتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
-        `📝 الكلام اللي هيتكتب:\n${piece.caption}`) +
-        "";
+        `📝 الكلام اللي هيتكتب:\n${piece.caption}\n\n` +
+        "💬 لو عايز تغير حاجة اكتبها عادي، زي: خليه أقصر";
       try {
         await this.telegram("sendMessage", { chat_id: job.chat, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [
-          [{ text: "🔄 كلام تاني من Gemini", callback_data: `rewrite:${piece.id}` },
-            { text: "🪄 عدّل بـ Gemini", callback_data: `guide:${piece.id}` }],
-          [{ text: "✏️ اكتب بإيدك", callback_data: `edit:${piece.id}` },
-            { text: "👀 شوفه", callback_data: `preview:${piece.id}` },
-            { text: "🗑 امسح", callback_data: `delete:${piece.id}` }],
+          [{ text: "👀 شوف البوست", callback_data: `preview:${piece.id}` }],
         ] } });
       } catch (e) {
         await this.send(job.chat, text);
       }
-      if (job.rewrite) continue;
       if (state.open?.photos.length && !state.open.count) {
         state.open.asked = true;
         await this.save();
@@ -789,14 +1002,9 @@ export class BotCore {
         const first = (p.caption || p.note || "").split("\n")[0].slice(0, 50);
         lines.push(`\nرقم ${p.id} – ${p.photos.length} صورة – ${times[p.id]}\n${first}`);
       }
-      // A row of buttons for each post (Telegram allows up to 100 buttons, so at most 15 posts get them).
-      const rows = state.pieces.slice(0, 14).flatMap((p) => [
-        [{ text: `── بوست رقم ${p.id} ──`, callback_data: `preview:${p.id}` }],
-        [{ text: "👀", callback_data: `preview:${p.id}` }, { text: "🔄", callback_data: `rewrite:${p.id}` },
-          { text: "🪄", callback_data: `guide:${p.id}` }, { text: "✏️", callback_data: `edit:${p.id}` },
-          { text: "🗑", callback_data: `delete:${p.id}` }, { text: "🚀", callback_data: `postask:${p.id}` }],
-      ]);
-      lines.push("\n👀 شوف · 🔄 كلام تاني · 🪄 عدّل بـ Gemini · ✏️ اكتب بإيدك · 🗑 امسح · 🚀 انشر دلوقتي");
+      // One button per post: it shows the post and what you can do with it.
+      const rows = state.pieces.slice(0, 50).map((p) => [{ text: `👀 بوست ${p.id} – ${times[p.id]}`, callback_data: `preview:${p.id}` }]);
+      lines.push("\n👇 دوس على أي بوست علشان تشوفه وتتحكم فيه، أو اكتب اللي عايزه عادي.");
       return this.telegram("sendMessage", { chat_id: chat, text: lines.join("\n").slice(0, 4000),
         reply_markup: { inline_keyboard: rows } }).catch(() => this.send(chat, lines.join("\n")));
     }
@@ -953,7 +1161,17 @@ export class BotCore {
       return this.send(chat, "⏳ بكتب كلام البوست ده… دوس 👀 تاني بعد دقيقة.");
     }
     const when = pieceSchedule(state, this.now())[piece.id];
-    return this.sendPreview(chat, piece, `👀 بوست رقم ${piece.id} – ${when}:`);
+    await this.sendPreview(chat, piece, `👀 بوست رقم ${piece.id} – ${when}:`);
+    return this.sendOptions(chat, piece);
+  }
+
+  sendOptions(chat, piece) {
+    // The few things you can do with one post, under its preview.
+    return this.telegram("sendMessage", { chat_id: chat, text: `بوست رقم ${piece.id} 👆 تحب تعمل إيه؟`,
+      reply_markup: { inline_keyboard: [
+        [{ text: "⬆️ خليه الجاي", callback_data: `first:${piece.id}` }, { text: "🚀 انشره دلوقتي", callback_data: `postask:${piece.id}` }],
+        [{ text: "🪄 عدّل الكلام", callback_data: `guide:${piece.id}` }, { text: "🗑 امسحه", callback_data: `delete:${piece.id}` }],
+      ] } }).catch(() => {});
   }
 
   askPostNow(chat, piece) {
