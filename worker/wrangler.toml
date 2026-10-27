@@ -1,0 +1,20 @@
+# Cloudflare Worker for the jewelry pieces bot. Secrets (TELEGRAM_BOT_TOKEN, GEMINI_API_KEY,
+# ALLOWED_USERS, WEBHOOK_SECRET, FB_PAGE_ID, FB_PAGE_TOKEN) are set in Cloudflare, never here.
+name = "pieces-poster"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/5 * * * *"]   # every 5 minutes: post at posting time, send alerts
+
+[[durable_objects.bindings]]
+name = "BOT"
+class_name = "Bot"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Bot"]
+
+[observability]
+enabled = true

@@ -1,0 +1,12 @@
+{
+  "name": "pieces-poster",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/test.js",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}
