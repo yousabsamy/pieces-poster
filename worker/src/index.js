@@ -25,7 +25,7 @@ export class Bot extends DurableObject {
   }
 
   alarm() {
-    return this.core.writePendingCaptions();   // captions for finished pieces, written in the background
+    return this.core.backgroundWork();   // captions for finished pieces and "post now", in the background
   }
 }
 

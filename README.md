@@ -13,7 +13,8 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
   something (under a photo or as a message, like `دبل خفيفة` or `عيار 21`), Gemini must work it into the caption.
 - If photos arrive before a number is chosen, the bot asks once and keeps them.
 - A few seconds later the bot answers with the day and time the piece goes out, and the caption.
-- Commands: `/list`, `/preview` (the next post exactly as it will look), `/delete 5`, `/caption 5 new text`,
+- Commands: `/list`, `/preview` (the next post exactly as it will look), `/postnow` or `/postnow 5`
+  (post the next post, or post 5, right away after a confirm button; the 3 PM / 10 PM posts still happen), `/delete 5`, `/caption 5 new text`,
   `/cancel` (drop the photos still being collected), `/reset` (empty the whole queue, with a confirm button).
 
 ## Captions
@@ -33,7 +34,7 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 
 ## Alerts
 
-From 1 PM to 11:30 PM, every 30 minutes, if there aren't enough pieces for the rest of today **and** all
+From 1 PM to 11:30 PM, every hour, if there aren't enough pieces for the rest of today **and** all
 of tomorrow, the bot sends "⚠️ تنبيه: مفيش بوستات جاهزة لبكرة". After each post it sends "✅ اتنشرت".
 
 ## Test mode

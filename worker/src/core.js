@@ -17,7 +17,7 @@ export const POST_HOURS = [15, 22];   // post one piece at each of these Cairo h
 const LATE_LIMIT_HOURS = 2;           // if something was down, still post up to this many hours after the time
 const ALERT_FROM = [13, 0];           // send "not enough pieces" alerts only from 1:00 PM...
 const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo time)
-const ALERT_EVERY_MINUTES = 30;
+const ALERT_EVERY_MINUTES = 60;
 const MAX_PHOTOS_PER_POST = 10;
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"];  // tried in this order
 const FB_API_VERSION = "v26.0";
@@ -108,6 +108,7 @@ const HELP =
   "الأوامر:\n" +
   "/list – البوستات اللي مستنية دورها\n" +
   "/preview – شوف البوست الجاي بالظبط زي ما هيتنشر\n" +
+  "/postnow – انشر البوست الجاي دلوقتي (أو /postnow 5 لبوست رقم 5)\n" +
   "/delete 5 – امسح بوست رقم 5\n" +
   "/caption 5 الكلام الجديد – غيّر كلام بوست رقم 5\n" +
   "/cancel – الغي الصور اللي لسه بتتبعت";
@@ -454,6 +455,14 @@ export class BotCore {
     const count = Number((query.data || "").split(":")[1]);
     await this.telegram("answerCallbackQuery", { callback_query_id: query.id }).catch(() => {});
     if (!this.allowedUsers().includes(query.from.id) || !chat) return;
+    if ((query.data || "").startsWith("postnow:")) {
+      const id = Number(query.data.split(":")[1]);
+      state.post_now = { id, chat };
+      await this.save();
+      await this.storage.setAlarm(this.now().ms);
+      return this.telegram("editMessageText", { chat_id: chat, message_id: query.message.message_id,
+        text: `⏳ بنشر بوست رقم ${id}…` }).catch(() => {});
+    }
     if (query.data === "reset:yes") {
       // Empty the queue and start again from piece number 1.
       this.state = Object.assign(newState(), { day: state.day, posted_hours: state.posted_hours });
@@ -514,6 +523,12 @@ export class BotCore {
     return this.send(chat, "⏳ استلمت الصور، بكتب الكلام…");
   }
 
+  async backgroundWork() {
+    // The Durable Object alarm: write captions for finished pieces, then any "post now".
+    await this.writePendingCaptions();
+    await this.postNowConfirmed(await this.load());
+  }
+
   async writePendingCaptions() {
     // Runs in the background right after a piece is finished.
     const state = await this.load();
@@ -550,6 +565,17 @@ export class BotCore {
     if (command === "/start" || command === "/help") {
       await this.send(chat, HELP);
       return this.askCount(chat);
+    }
+
+    if (command === "/postnow") {
+      const piece = rest ? find(rest) : state.pieces[0];
+      if (!piece) {
+        return this.send(chat, state.pieces.length
+          ? "مفيش بوست بالرقم ده. شوف الأرقام بـ /list" : "📭 مفيش بوستات مستنية دلوقتي.");
+      }
+      return this.telegram("sendMessage", { chat_id: chat,
+        text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوستات الساعة 3 و10)`,
+        reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
     }
 
     if (command === "/reset") {
@@ -655,25 +681,8 @@ export class BotCore {
         "📸 ابعت صور القطع هنا.");
     }
     const piece = state.pieces[0];
-
-    if (!this.env.FB_PAGE_TOKEN) {
-      // TEST MODE: show the post on Telegram instead of posting it.
-      if (!piece.caption) await this.writeCaption(piece);
-      state.pieces.shift();
-      state.posted_hours.push(slot);
-      await this.save();
-      for (const user of this.allowedUsers()) {
-        await this.sendPreview(user, piece,
-          `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (بوست رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
-      }
-      return;
-    }
-
-    let postId;
     try {
-      const images = await this.postPhotos(piece);
-      if (!piece.caption) await this.writeCaption(piece);
-      postId = await this.postToFacebook(images, fullCaption(piece));
+      await this.publish(state, piece, () => state.posted_hours.push(slot));
     } catch (e) {
       console.log(`Posting piece ${piece.id} failed: ${e.message}`);
       const slotName = `${now.date} ${slot}`;
@@ -681,13 +690,43 @@ export class BotCore {
         state.failed_slot = slotName;
         await this.tellEveryone(`❌ حصلت مشكلة في نشر بوست رقم ${piece.id}. هحاول تاني كمان شوية.\n${e.message.slice(0, 200)}`);
       }
+    }
+  }
+
+  async publish(state, piece, markDone = () => {}) {
+    // Posts one piece (or, in TEST MODE, shows it on Telegram), takes it out of the queue and tells everyone.
+    if (!piece.caption) await this.writeCaption(piece);
+    const testMode = !this.env.FB_PAGE_TOKEN;
+    let postId = null;
+    if (!testMode) postId = await this.postToFacebook(await this.postPhotos(piece), fullCaption(piece));
+    state.pieces.splice(state.pieces.indexOf(piece), 1);
+    markDone();
+    await this.save();                                 // save right away, so it never posts twice
+    if (testMode) {
+      for (const user of this.allowedUsers()) {
+        await this.sendPreview(user, piece,
+          `🧪 تجربة – ده البوست اللي كان هيتنشر دلوقتي على الصفحة (بوست رقم ${piece.id}). ما اتنشرش على الفيسبوك.`);
+      }
       return;
     }
-    state.pieces.shift();
-    state.posted_hours.push(slot);
-    await this.save();                                 // save right away, so it never posts twice
     console.log(`Posted piece ${piece.id}: ${postId}`);
     await this.tellEveryone(`✅ اتنشر بوست رقم ${piece.id} على الصفحة.\nفاضل: ${state.pieces.length} بوست جاهز.`);
+  }
+
+  async postNowConfirmed(state) {
+    // Runs in the background (alarm) after the "post now" button, because posting can take a while.
+    const job = state.post_now;
+    if (!job) return;
+    state.post_now = null;
+    await this.save();
+    const piece = state.pieces.find((p) => p.id === job.id);
+    if (!piece) return this.send(job.chat, `مفيش بوست رقم ${job.id} في الطابور.`);
+    try {
+      await this.publish(state, piece);
+    } catch (e) {
+      console.log(`Post now failed: ${e.message}`);
+      await this.send(job.chat, `❌ حصلت مشكلة في نشر بوست رقم ${piece.id}. جرب تاني.\n${e.message.slice(0, 200)}`);
+    }
   }
 
   async alertIfNeeded(state, now) {

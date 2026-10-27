@@ -61,7 +61,7 @@ function msg(user, { photo, text, caption, group, document } = {}) {
   return bot.handleUpdate({ update_id: updateId, message: m }).then(background);
 }
 async function background() {   // what the Durable Object alarm does right after
-  if (alarmSet) { alarmSet = false; await bot.writePendingCaptions(); }
+  if (alarmSet) { alarmSet = false; await bot.backgroundWork(); }
 }
 function tap(user, count) {   // the worker taps a number button
   return bot.handleUpdate({ update_id: ++updateId, callback_query: {
@@ -123,15 +123,15 @@ console.log("/list:\n" + to(WORKER)[0] + "\n");
 await tap(STRANGER, 3);
 assert.equal(bot.state.open, null);
 
-// 4. Alerts: 3 pieces, but today (2) + tomorrow (2) need 4 -> alert from 1 PM, every 30 minutes, until 11:30 PM.
+// 4. Alerts: 3 posts, but today (2) + tomorrow (2) need 4 -> alert from 1 PM, every hour, until 11:30 PM.
 sent = [];
 at(12, 45); await bot.tick();
 assert.equal(alerts().length, 0);
 at(13); await bot.tick();
 assert.equal(alerts().length, 1);
-at(13, 15); await bot.tick();
-assert.equal(alerts().length, 1);
 at(13, 30); await bot.tick();
+assert.equal(alerts().length, 1);         // not again after only 30 minutes
+at(14); await bot.tick();
 assert.equal(alerts().length, 2);
 
 // 5. 4 PM posts piece 1 (2 photos in one post), never twice.
@@ -204,6 +204,23 @@ assert.match(lastPrompt, /wrote this about the piece: "دبل خفيفه". You M
 await tap(WORKER, 1);
 await msg(WORKER, { photo: "n2", caption: "عيار 21" });
 assert.equal(bot.state.pieces.at(-1).note, "عيار 21");
+
+// 9f. /postnow 2 asks first; the button posts piece 2 right away (test mode -> Telegram), the queue moves on.
+env.FB_PAGE_TOKEN = "x";
+const fbCount = fb.length;
+await tap(WORKER, 1); await msg(WORKER, { photo: "p1" });
+await tap(WORKER, 1); await msg(WORKER, { photo: "p2" });
+const ids = bot.state.pieces.map((p) => p.id);
+sent = [];
+await msg(WORKER, { text: `/postnow ${ids.at(-1)}` });
+assert.equal(fb.length, fbCount);                 // nothing yet, only the question
+await bot.handleUpdate({ update_id: ++updateId, callback_query: { id: "pn", from: { id: WORKER },
+  data: `postnow:${ids.at(-1)}`, message: { message_id: 1, chat: { id: WORKER } } } }).then(background);
+assert.equal(fb.at(-1)[0], "photos");
+assert.ok(!bot.state.pieces.some((p) => p.id === ids.at(-1)));
+assert.ok(bot.state.pieces.some((p) => p.id === ids.at(-2)));
+assert.ok(to(WORKER).some((t) => t.startsWith("✅ اتنشر بوست رقم")));
+delete env.FB_PAGE_TOKEN;
 
 // 9b. /reset only empties the queue after the confirm button.
 await tap(WORKER, 1);
