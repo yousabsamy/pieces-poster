@@ -57,11 +57,9 @@ const STYLE_EXAMPLES = [
 
 // Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
 const CHEERS = [
-  "🌟 الله ينور يا {name}! 💪🔥 كمّل كده",
+  "🌟 الله ينور يا {name}! 💪🔥",
   "👏 الله ينور يا {name}! ✨ شغل عالي",
   "💛 الله ينور يا {name}! 😍 تسلم إيدك",
-  "🔥 الله ينور يا {name}! 💪 مستنيين القطعة الجاية",
-  "🏆 الله ينور يا {name}! 🌟 إنت جامد",
 ];
 
 // Used only when Gemini is not available.
