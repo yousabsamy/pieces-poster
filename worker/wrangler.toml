@@ -6,7 +6,7 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-PAUSED = "yes"            # "yes" = no posting and no alerts (queue kept). Set to "no" and deploy to start again.
+PAUSED = "no"            # "yes" = no posting and no alerts (queue kept). Set to "no" and deploy to start again.
 
 [triggers]
 crons = ["*/5 * * * *"]   # every 5 minutes: post at posting time, send alerts

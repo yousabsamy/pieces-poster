@@ -1052,8 +1052,19 @@ export class BotCore {
       const photo = piece ? (await this.postPhotos(piece))[0] : this.logo;      // no posts: test with the logo itself
       const { id } = await this.facebook("photos", { published: "false" }, photo);
       const del = await this.fetch(`${graph}/${id}?access_token=${token}`, { method: "DELETE" });
-      return this.send(chat, `✅ الفيسبوك شغال!\nالصفحة: ${page.name}\nرفعت صورة مخفية واتمسحت ${del.ok ? "✅" : "⚠️ (امسحها من الصفحة)"}\n` +
-        "البوستات هتتنشر على الصفحة في مواعيدها 🎉");
+      // How long the saved key keeps working (0 = never).
+      let life = "";
+      try {
+        const k = encodeURIComponent(this.env.FB_PAGE_TOKEN);
+        const info = (await (await this.fetch(`${graph}/debug_token?input_token=${k}&access_token=${k}`)).json()).data || {};
+        const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+        life = `\n🔑 المفتاح: ${info.expires_at === 0 ? "مش بيخلص ✅" : info.expires_at ? `بيخلص ${day(info.expires_at)}` : "؟"}` +
+          (info.data_access_expires_at ? ` – صلاحية البيانات لحد ${day(info.data_access_expires_at)}` : "");
+      } catch (e) {
+        console.log(`Could not read the key's expiry: ${e.message}`);
+      }
+      return this.send(chat, `✅ الفيسبوك شغال!\nالصفحة: ${page.name}\nرفعت صورة مخفية واتمسحت ${del.ok ? "✅" : "⚠️ (امسحها من الصفحة)"}` +
+        `${life}\nالبوستات هتتنشر على الصفحة في مواعيدها 🎉`);
     } catch (e) {
       console.log(`Facebook test failed: ${e.message}`);
       return this.send(chat, `❌ الفيسبوك مش شغال: ${e.message.slice(0, 300)}`);
