@@ -1043,8 +1043,8 @@ export class BotCore {
     if (!this.env.FB_PAGE_TOKEN) return this.send(chat, "🧪 لسه مفيش مفتاح فيسبوك، البوت في وضع التجربة.");
     await this.send(chat, "⏳ بجرب الفيسبوك (صورة مخفية محدش هيشوفها وهتتمسح على طول)…");
     const graph = `https://graph.facebook.com/${FB_API_VERSION}`;
-    const token = encodeURIComponent(this.env.FB_PAGE_TOKEN);
     try {
+      const token = encodeURIComponent(await this.pageToken());
       const pageRes = await this.fetch(`${graph}/${this.env.FB_PAGE_ID}?fields=name&access_token=${token}`);
       const page = await pageRes.json();
       if (!pageRes.ok) throw new Error(page.error?.message || `page ${pageRes.status}`);
@@ -1062,10 +1062,29 @@ export class BotCore {
 
   // ---- Facebook ----
 
+  async pageToken() {
+    // FB_PAGE_TOKEN may be the page's own key, or the (long-lived) user key it came from. In that case,
+    // ask Facebook for the page's key once and keep it in memory: posting must be done "as the page".
+    if (this.cachedPageToken) return this.cachedPageToken;
+    const key = this.env.FB_PAGE_TOKEN;
+    const graph = `https://graph.facebook.com/${FB_API_VERSION}`;
+    try {
+      const me = await (await this.fetch(`${graph}/me?fields=id&access_token=${encodeURIComponent(key)}`)).json();
+      if (me.id && String(me.id) !== String(this.env.FB_PAGE_ID)) {
+        const page = await (await this.fetch(
+          `${graph}/${this.env.FB_PAGE_ID}?fields=access_token&access_token=${encodeURIComponent(key)}`)).json();
+        if (page.access_token) return (this.cachedPageToken = page.access_token);
+      }
+    } catch (e) {
+      console.log(`Could not check the Facebook key: ${e.message}`);
+    }
+    return (this.cachedPageToken = key);
+  }
+
   async facebook(path, fields, image) {
     const form = new FormData();
     for (const [k, v] of Object.entries(fields)) form.append(k, v);
-    form.append("access_token", this.env.FB_PAGE_TOKEN);
+    form.append("access_token", await this.pageToken());
     if (image) form.append("source", new Blob([image], { type: imageType(image) || "image/jpeg" }), "piece");
     const res = await this.fetch(`https://graph.facebook.com/${FB_API_VERSION}/${this.env.FB_PAGE_ID}/${path}`,
       { method: "POST", body: form });
