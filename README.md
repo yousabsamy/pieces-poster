@@ -1,7 +1,7 @@
 # Jewelry pieces auto-poster – مجوهرات السلام
 
 The worker sends photos of a piece to the Telegram bot. The bot answers **right away**, puts the
-piece in a queue, and posts **two pieces a day** to the Facebook page at **3 PM and 10 PM Cairo time**.
+piece in a queue, and posts **one piece a day at 10 PM Cairo time** (`POST_HOURS` in `worker/wrangler.toml`; the gold price posts at 7 PM).
 
 It runs on **Cloudflare Workers** (free). It's completely separate from the gold price poster.
 The code is in `worker/src/core.js`. The settings are at the top of that file.

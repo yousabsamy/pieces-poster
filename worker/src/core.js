@@ -13,7 +13,9 @@
 import { Buffer } from "node:buffer";
 
 // ---------------- Settings (safe to change) ----------------
-export const POST_HOURS = [15, 22];   // post one piece at each of these Cairo hours (3 PM and 10 PM)
+// Cairo hours to post one piece at. POST_HOURS in wrangler.toml overrides this (now "22" = one post a day at 10 PM;
+// the gold price posts at 7 PM). Waiting posts move to the next free times by themselves.
+export let POST_HOURS = [15, 22];
 const LATE_LIMIT_HOURS = 2;           // if something was down, still post up to this many hours after the time
 const ALERT_FROM = [13, 0];           // send "not enough pieces" alerts only from 1:00 PM...
 const ALERT_UNTIL = [23, 30];         // ...until 11:30 PM (hour, minute, Cairo time)
@@ -110,7 +112,7 @@ const GEMINI_PROMPT =
 // What Gemini is told when someone writes to the bot in their own words.
 const ASSISTANT_PROMPT = `You are the assistant inside the Telegram bot of ${"مجوهرات السلام"}, a gold jewelry shop in Egypt.
 The shop's worker or owner writes to you in Egyptian Arabic. The bot keeps a queue of jewelry posts and publishes
-one post at each posting time (3 PM and 10 PM Cairo time) on Facebook. Understand what they want and answer in JSON.
+one post at each posting time (now 10 PM Cairo time) on Facebook. Understand what they want and answer in JSON.
 
 Cairo time now: {now}
 Upcoming posting times (position: time): {slots}
@@ -167,7 +169,7 @@ const HELP =
   "أهلاً 👋\n" +
   "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
   "📸 قبل كل قطعة هسألك كام صورة. دوس على الرقم، وبعدين ابعت الصور.\n" +
-  "🗓 كل يوم بيتنشر بوستين: الساعة 3 العصر و10 بالليل.\n\n" +
+  "🗓 كل يوم بيتنشر بوست واحد الساعة 10 بالليل.\n\n" +
   "💬 وأي حاجة عايزها اكتبها عادي بالعربي، وأنا هفهم وأعملها. مثلاً:\n" +
   "• دبل خفيفه (معلومة عن القطعة)\n" +
   "• خلي بوست الخاتم يتنشر بكرة الساعة 10\n" +
@@ -329,6 +331,8 @@ export class BotCore {
     this.env = env;
     this.fetch = fetchFn;
     this.now = () => cairoTime(nowFn());
+    const hours = (env.POST_HOURS || "").match(/\d+/g)?.map(Number).filter((h) => h >= 0 && h < 24);
+    if (hours?.length) POST_HOURS = hours.sort((a, b) => a - b);
     this.geminiWaits = [0, 10];      // seconds to wait before each round of Gemini tries when it's busy
   }
 
@@ -1239,7 +1243,7 @@ export class BotCore {
   askPostNow(chat, piece) {
     if (this.paused()) return this.send(chat, "⏸ البوت متوقف مؤقتًا، مش هينشر حاجة دلوقتي. البوستات محفوظة زي ما هي.");
     return this.telegram("sendMessage", { chat_id: chat,
-      text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوستات الساعة 3 و10)`,
+      text: `🚀 تنشر بوست رقم ${piece.id} دلوقتي على الصفحة؟\n(ده مش هيلغي بوست الساعة 10)`,
       reply_markup: { inline_keyboard: [[{ text: "✅ أيوه، انشره دلوقتي", callback_data: `postnow:${piece.id}` }]] } });
   }
 

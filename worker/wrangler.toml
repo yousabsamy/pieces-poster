@@ -6,6 +6,7 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
+POST_HOURS = "22"         # one piece a day at 10 PM Cairo (gold price is at 7 PM). Example for two: "15, 22"
 PAUSED = "no"            # "yes" = no posting and no alerts (queue kept). Set to "no" and deploy to start again.
 
 [triggers]

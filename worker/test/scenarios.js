@@ -891,6 +891,28 @@ await scenario("PAUSED: no posting, no alerts, no post-now; the queue stays; unp
   assert.equal(w.pieces().length, 1);
 });
 
+await scenario("One post a day at 10 PM (POST_HOURS=22): queued posts move to one per day; alert wants only 1 for tomorrow", async () => {
+  const { BotCore: B } = await import("../src/core.js");
+  const w = makeBot();
+  w.env.POST_HOURS = "22";
+  w.bot = new B(w.bot.storage, w.env, w.bot.fetch, () => w.clock);
+  w.bot.geminiWaits = [0];
+  await w.addPiece(); await w.addPiece(); await w.addPiece();
+  w.sent = [];
+  await w.msg(HEMA, { text: "/list" });
+  const list = w.texts(HEMA)[0];
+  assert.match(list, /رقم 1 – 1 صورة – النهارده الساعة 10 مساءً/);
+  assert.match(list, /رقم 2 – 1 صورة – بكرة الساعة 10 مساءً/);
+  w.at(15, 5); await w.tick();
+  assert.equal(w.fb.length, 0);                    // nothing at 3 PM anymore
+  w.at(22, 5); await w.tick();
+  assert.equal(w.fb.length, 1);
+  w.at(13, 0, 29); await w.tick();
+  assert.equal(w.count(OWNER, "⚠️ تنبيه"), 0);       // 2 left: today + tomorrow covered
+  w.env.POST_HOURS = "15, 22";
+  new B(w.bot.storage, w.env, w.bot.fetch, () => w.clock);   // back to the default for the other tests
+});
+
 // ---------------- Posting on time ----------------
 
 await scenario("3 PM: posts the first post; 3:05 again does nothing; 10 PM posts the next", async () => {
