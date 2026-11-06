@@ -1,0 +1,66 @@
+name: Put the logo on a video
+
+# Started by the pieces bot (Cloudflare Worker) when the worker sends a video on Telegram.
+# It downloads the video from Telegram, puts the shop logo in the bottom-right corner (same place and size as
+# on the photos), sends the finished video back to the chat, and tells the bot its new Telegram file id.
+on:
+  workflow_dispatch:
+    inputs:
+      piece:
+        description: "Post number"
+        required: true
+      file_id:
+        description: "Telegram file id of the video"
+        required: true
+      chat:
+        description: "Telegram chat to send the finished video to"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  logo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      VIDEO_SECRET: ${{ secrets.VIDEO_SECRET }}
+      PIECE: ${{ inputs.piece }}
+      FILE_ID: ${{ inputs.file_id }}
+      CHAT: ${{ inputs.chat }}
+      READY_URL: https://pieces-poster.pieces-poster.workers.dev/video-ready
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the video from Telegram
+        run: |
+          path=$(curl -sf "https://api.telegram.org/bot$TOKEN/getFile" --data-urlencode "file_id=$FILE_ID" | jq -r .result.file_path)
+          curl -sf -o in.video "https://api.telegram.org/file/bot$TOKEN/$path"
+          ls -la in.video
+
+      - name: Put the logo on it
+        run: |
+          # Logo width = 16% of the video width, 3% from the right and bottom edges. Smaller file if over 19 MB.
+          for crf in 23 27 31; do
+            ffmpeg -hide_banner -loglevel error -y -i in.video -i worker/assets/logo.png -filter_complex \
+              "[1:v][0:v]scale2ref=w='iw*0.16':h='ow/mdar'[logo][base];[base][logo]overlay=x='W-w-W*0.03':y='H-h-W*0.03',format=yuv420p" \
+              -c:v libx264 -preset veryfast -crf $crf -c:a aac -b:a 128k -movflags +faststart out.mp4
+            size=$(stat -c %s out.mp4)
+            echo "crf $crf -> $size bytes"
+            [ "$size" -lt 19000000 ] && break
+          done
+
+      - name: Send it back and tell the bot
+        run: |
+          file=$(curl -sf -F chat_id="$CHAT" -F video=@out.mp4 -F supports_streaming=true \
+            -F caption="🎬 ده الفيديو باللوجو (بوست رقم $PIECE)" \
+            "https://api.telegram.org/bot$TOKEN/sendVideo" | jq -r '.result.video.file_id // .result.document.file_id')
+          curl -sf -X POST "$READY_URL" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg s "$VIDEO_SECRET" --arg p "$PIECE" --arg f "$file" '{secret:$s, piece:$p, file_id:$f}')"
+
+      - name: Tell the bot it failed
+        if: failure()
+        run: |
+          curl -s -X POST "$READY_URL" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg s "$VIDEO_SECRET" --arg p "$PIECE" '{secret:$s, piece:$p, error:"failed"}')"

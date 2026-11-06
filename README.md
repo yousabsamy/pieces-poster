@@ -22,6 +22,15 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
   shows the post with: ⬆️ make it next · 🚀 post now · 🪄 change the caption · 🗑 delete.
 - Short Arabic words like `امسح 3`, `انشر 2`, `شوف 4` are understood right away without Gemini; old `/` commands still work.
 
+## Videos
+
+- The worker can send a video (under 20 MB). It is always one post on its own; text sent before or under it is its note.
+- Gemini watches the video (Gemini file upload) and writes the caption; if that fails it uses the video cover picture.
+- The logo is added by the GitHub Action `.github/workflows/video-logo.yml` (ffmpeg, same size and place as photos).
+  The Worker starts it with `GITHUB_TOKEN`; it sends the finished video to the chat and reports to `/video-ready`
+  with `VIDEO_SECRET`. GitHub secrets needed: `TELEGRAM_BOT_TOKEN`, `VIDEO_SECRET`.
+- At posting time it waits up to 2 hours for the logo version, then posts as it is. Posted as a Facebook video.
+
 ## Captions
 
 - Gemini looks at the photos, works out what the piece is (حلق، خاتم، دبلة، غويشة، انسيال، سلسلة…) and writes the

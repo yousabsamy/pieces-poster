@@ -11,6 +11,7 @@ const GOOD = "✨ حلق دهب رقيق 💛\nتفاصيل ناعمة ولمع�
 
 function makeBot({ facebook = true, names = true } = {}) {
   const w = {
+    github: [], githubFail: false, geminiUploadFail: false,
     sent: [], media: [], fb: [], prompts: [], assistantPrompts: [], store: new Map(), alarm: false, clock: 0, updateId: 0,
     assistant: [null],       // the assistant's answers ({reply, actions}); null = Gemini down -> text becomes a note
     gemini: [GOOD],          // answers in order; the last one repeats. null = busy (503), "BAD" = unusable text
@@ -30,6 +31,14 @@ function makeBot({ facebook = true, names = true } = {}) {
       else w.media.push({ method, p });
       return json({ ok: true, result: {} });
     }
+    if (url.includes("api.github.com")) {
+      w.github.push(JSON.parse(options.body));
+      return { ok: !w.githubFail, status: w.githubFail ? 500 : 204, text: async () => "" };
+    }
+    if (url.includes("upload/v1beta/files")) {
+      if (w.geminiUploadFail) return json({ error: "no" }, 500);
+      return json({ file: { name: "files/v1", uri: "https://gemini/files/v1", mimeType: "video/mp4", state: "ACTIVE" } });
+    }
     if (url.includes("generativelanguage")) {
       const body = JSON.parse(options.body);
       if (body.generationConfig?.responseMimeType === "application/json") {    // the assistant
@@ -39,15 +48,20 @@ function makeBot({ facebook = true, names = true } = {}) {
         return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(a) }] } }] });
       }
       w.prompts.push(body.contents[0].parts[0].text);
+      w.parts = body.contents[0].parts;
       const answer = w.gemini.length > 1 ? w.gemini.shift() : w.gemini[0];
       if (answer === null) return json({ error: "busy" }, 503);
       return json({ candidates: [{ content: { parts: [{ text: answer }] } }] });
     }
-    if (url.includes("graph.facebook.com")) {
+    if (url.includes("graph.facebook.com") || url.includes("graph-video.facebook.com")) {
       if (!options.method || options.method === "GET") return json({ name: "مجوهرات السلام - Al-Salam Jewelry" });
       if (options.method === "DELETE") return json({ success: true });
       const path = url.split("/").pop();
       if (w.fbFail || w.fbFailPath === path) return json({ error: "test" }, 500);
+      if (url.includes("graph-video")) {
+        w.fb.push({ path: "videos", fields: { description: options.body.get("description") } });
+        return json({ id: `video${w.fb.length}` });
+      }
       const fields = Object.fromEntries([...options.body.entries()].filter(([k]) => k !== "source"));
       w.fb.push({ path, fields });
       return json({ id: `id${w.fb.length}`, post_id: `post${w.fb.length}` });
@@ -64,6 +78,7 @@ function makeBot({ facebook = true, names = true } = {}) {
   if (facebook) w.env.FB_PAGE_TOKEN = "x";
   w.bot = new BotCore(storage, w.env, fetchFn, () => w.clock);
   w.bot.geminiWaits = [0];
+  w.bot.videoPollMs = 0;
   // Set the clock to a Cairo time (handles summer time).
   w.at = (hour, minute = 0, day = 28) => {
     w.clock = Date.UTC(2026, 9, day, hour, minute);
@@ -75,6 +90,7 @@ function makeBot({ facebook = true, names = true } = {}) {
     const message = { message_id: ++w.updateId, from: { id: user }, chat: { id: user, type: chatType } };
     if (m.photo) message.photo = [{ file_id: m.photo + "-small" }, { file_id: m.photo }];
     if (m.doc) message.document = m.doc;
+    if (m.video) message.video = m.video;
     for (const k of ["text", "caption"]) if (m[k] !== undefined) message[k] = m[k];
     await w.bot.handleUpdate({ update_id: w.updateId, message });
     await w.background();
@@ -911,6 +927,109 @@ await scenario("One post a day at 10 PM (POST_HOURS=22): queued posts move to on
   assert.equal(w.count(OWNER, "⚠️ تنبيه"), 0);       // 2 left: today + tomorrow covered
   w.env.POST_HOURS = "15, 22";
   new B(w.bot.storage, w.env, w.bot.fetch, () => w.clock);   // back to the default for the other tests
+});
+
+// ---------------- Videos ----------------
+
+const VIDEO = { file_id: "vid1", file_size: 5 * 1048576, mime_type: "video/mp4", thumbnail: { file_id: "thumb1" } };
+
+await scenario("Video: one post on its own, GitHub asked to add the logo, Gemini watches the video", async () => {
+  const w = makeBot();
+  w.env.GITHUB_TOKEN = "gh";
+  await w.msg(HEMA, { video: VIDEO });
+  const p = w.pieces()[0];
+  assert.equal(p.video.id, "vid1");
+  assert.equal(p.video_status, "processing");
+  assert.deepEqual(w.github[0].inputs, { piece: "1", file_id: "vid1", chat: String(HEMA) });
+  assert.ok(w.has(HEMA, "بحط اللوجو عليه"));
+  assert.equal(p.caption, GOOD);
+  assert.ok(w.parts.some((x) => x.file_data?.file_uri === "https://gemini/files/v1"));
+  assert.ok(w.has(HEMA, "✅ بوست رقم 1 جاهز"));
+});
+
+await scenario("Video: text before it (or under it) becomes its note", async () => {
+  const w = makeBot();
+  w.assistant = [null];
+  await w.msg(HEMA, { text: "طقم كامل" });
+  await w.msg(HEMA, { video: VIDEO, caption: "عيار 21" });
+  assert.equal(w.pieces()[0].note, "طقم كامل – عيار 21");
+  assert.equal(w.bot.state.open, null);
+});
+
+await scenario("Video: too big (over 20 MB) is refused with a clear message", async () => {
+  const w = makeBot();
+  await w.msg(HEMA, { video: { ...VIDEO, file_size: 35 * 1048576 } });
+  assert.equal(w.pieces().length, 0);
+  assert.ok(w.has(HEMA, "الفيديو ده كبير (35 ميجا)"));
+});
+
+await scenario("Video: Gemini can't take the video → caption from its cover picture", async () => {
+  const w = makeBot();
+  w.geminiUploadFail = true;
+  await w.msg(HEMA, { video: VIDEO });
+  assert.equal(w.pieces()[0].caption, GOOD);
+  assert.ok(w.parts.some((x) => x.inline_data));
+});
+
+await scenario("Video: logo ready → the post uses the logo version; posted as a video with caption + contact", async () => {
+  const w = makeBot();
+  w.env.GITHUB_TOKEN = "gh";
+  await w.msg(HEMA, { video: VIDEO });
+  assert.equal(await w.bot.videoReady({ piece: "1", file_id: "vid1_logo" }), "ok");
+  assert.equal(w.pieces()[0].video_final, "vid1_logo");
+  w.at(22, 0); await w.tick();
+  assert.equal(w.fb[0].path, "videos");
+  assert.ok(w.fb[0].fields.description.startsWith(GOOD) && w.fb[0].fields.description.endsWith(CONTACT));
+  assert.equal(w.pieces().length, 0);
+});
+
+await scenario("Video: at posting time it waits for the logo (up to 2 hours), then posts without it", async () => {
+  const w = makeBot();
+  w.env.GITHUB_TOKEN = "gh";
+  w.at(21, 50);
+  await w.msg(HEMA, { video: VIDEO });
+  w.at(22, 0); await w.tick();
+  assert.equal(w.fb.length, 0);
+  w.at(23, 55); await w.tick();
+  assert.equal(w.fb.length, 1);
+});
+
+await scenario("Video: logo job failed → told once, posts without the logo; no GitHub key → no logo at all", async () => {
+  const w = makeBot();
+  w.env.GITHUB_TOKEN = "gh";
+  await w.msg(HEMA, { video: VIDEO });
+  await w.bot.videoReady({ piece: "1", error: "failed" });
+  assert.ok(w.has(HEMA, "ماقدرتش أحط اللوجو"));
+  assert.equal(w.pieces()[0].video_status, "no_logo");
+  const w2 = makeBot();
+  await w2.msg(HEMA, { video: VIDEO });
+  assert.equal(w2.github.length, 0);
+  assert.ok(w2.has(HEMA, "اللوجو مش متفعل"));
+});
+
+await scenario("Video: preview and test mode send the video with the caption", async () => {
+  const w = makeBot({ facebook: false });
+  await w.msg(HEMA, { video: VIDEO });
+  await w.msg(HEMA, { text: "شوف 1" });
+  const v = w.media.find((m) => m.method === "sendVideo");
+  assert.equal(v.p.video, "vid1");
+  assert.ok(v.p.caption.endsWith(CONTACT));
+  w.at(22, 5); await w.tick();
+  assert.ok(w.has(OWNER, "🧪 تجربة"));
+  assert.equal(w.pieces().length, 0);
+});
+
+await scenario("Video and photo posts mixed in the queue keep their order", async () => {
+  const w = makeBot();
+  await w.addPiece();
+  await w.msg(HEMA, { video: VIDEO });
+  await w.addPiece();
+  assert.deepEqual(w.pieces().map((p) => Boolean(p.video)), [false, true, false]);
+});
+
+await scenario("/video-ready for a post that's gone just says so", async () => {
+  const w = makeBot();
+  assert.equal(await w.bot.videoReady({ piece: "9", file_id: "x" }), "no such post");
 });
 
 // ---------------- Posting on time ----------------

@@ -73,7 +73,12 @@ const LOGO_WIDTH = 0.16;       // logo width, as a part of the photo's width
 const LOGO_MARGIN = 0.03;      // space from the edges, as a part of the photo's width
 const LOGO_OPACITY = 0.95;
 const STORIES_ON = false;        // owner wants Stories later: set to true to turn them on
-const MAX_STORIES_PER_POST = 3;  // after each post, its photos (up to this many) also go up as Page Stories
+const MAX_STORIES_PER_POST = 3;
+// Videos: Telegram lets bots download up to 20 MB. The logo is added by a GitHub Action (video-logo.yml),
+// which sends the finished video back to the chat and tells the Worker its new file id (/video-ready).
+const MAX_VIDEO_MB = 20;
+const GITHUB_REPO = "yousabsamy/pieces-poster";
+const VIDEO_WAIT_HOURS = 2;      // at posting time, wait this long for the logo version before posting without it  // after each post, its photos (up to this many) also go up as Page Stories
 
 // Said to the worker every time a post is ready. {name} comes from the USER_NAMES secret ("id:name, id:name").
 const CHEERS = [
@@ -169,6 +174,7 @@ const HELP =
   "أهلاً 👋\n" +
   "ابعت صور القطعة هنا وأنا هنزلها على صفحة الفيسبوك.\n\n" +
   "📸 قبل كل قطعة هسألك كام صورة. دوس على الرقم، وبعدين ابعت الصور.\n" +
+  "🎬 وممكن تبعت فيديو للقطعة (أقل من 20 ميجا)، وهحط عليه اللوجو وأكتب الكلام.\n" +
   "🗓 كل يوم بيتنشر بوست واحد الساعة 10 بالليل.\n\n" +
   "💬 وأي حاجة عايزها اكتبها عادي بالعربي، وأنا هفهم وأعملها. مثلاً:\n" +
   "• دبل خفيفه (معلومة عن القطعة)\n" +
@@ -453,6 +459,11 @@ export class BotCore {
     // Show a post on Telegram exactly as it will look on Facebook: the photos with the logo and the full caption.
     await this.send(chat, header);
     const caption = fullCaption(piece).slice(0, 1024);
+    if (piece.video) {
+      const note = piece.video_status === "processing" ? "\n\n(⏳ اللوجو لسه بيتحط على الفيديو)" : "";
+      return this.telegram("sendVideo", { chat_id: chat, video: piece.video_final || piece.video.id,
+        caption: (caption + note).slice(0, 1024) }).catch((e) => this.send(chat, caption));
+    }
     try {
       const photos = await this.postPhotos(piece);
       const form = new FormData();
@@ -500,9 +511,13 @@ export class BotCore {
         "numbers or hashtags.\n"
       : "";
     const parts = [{ text: GEMINI_PROMPT.replace("{recent}", recentText).replace("{note}", noteText + editText) }];
-    for (const bytes of images.slice(0, 3)) {
-      const type = imageType(bytes);
-      if (type) parts.push({ inline_data: { mime_type: type, data: Buffer.from(bytes).toString("base64") } });
+    for (const item of images.slice(0, 3)) {
+      if (!(item instanceof Uint8Array)) {           // a ready part, like an uploaded video
+        parts.push(item);
+        continue;
+      }
+      const type = imageType(item);
+      if (type) parts.push({ inline_data: { mime_type: type, data: Buffer.from(item).toString("base64") } });
     }
     const body = JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.9 } });
     // The free Gemini plan allows only a few requests a minute. When it says "busy" (429/503), wait and try again.
@@ -535,6 +550,7 @@ export class BotCore {
   }
 
   async writeCaption(piece, images, { fallback = true, edit = null } = {}) {
+    if (!images && piece.video) images = await this.videoForGemini(piece);
     if (!images) {
       try {
         images = await Promise.all(piece.photos.slice(0, 3).map((f) => this.downloadPhoto(f)));
@@ -581,6 +597,8 @@ export class BotCore {
     }
 
     if (fileId) return this.addPhoto(state, msg, fileId, asFile);
+    const video = msg.video || msg.animation || (msg.document?.mime_type?.startsWith("video/") ? msg.document : null);
+    if (video) return this.addVideo(state, msg, video);
     const text = msg.text || "";
     const command = text.startsWith("/") ? text : arabicCommand(text);
     // After tapping 🪄, the next text (that isn't a button) is the change Gemini should make.
@@ -694,6 +712,104 @@ export class BotCore {
     const left = count - state.open.photos.length;
     if (left <= 0) return this.finishPiece(state, chat);
     return this.send(chat, state.open.photos.length ? `فاضل ${left} صورة.` : `ابعت ${count} صورة دلوقتي 👇`);
+  }
+
+  // ---- Videos ----
+
+  async videoForGemini(piece) {
+    // Gemini watches the whole video (uploaded to Gemini's file store). If that fails, it gets the video's cover picture.
+    const key = this.env.GEMINI_API_KEY;
+    try {
+      const bytes = await this.downloadPhoto(piece.video.id);
+      const up = await this.fetch("https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=media", {
+        method: "POST", headers: { "Content-Type": piece.video.mime || "video/mp4", "x-goog-api-key": key }, body: bytes,
+        signal: AbortSignal.timeout(60000) });
+      if (!up.ok) throw new Error(`upload ${up.status}`);
+      let file = (await up.json()).file;
+      for (let i = 0; i < 20 && file.state === "PROCESSING"; i++) {
+        await new Promise((r) => setTimeout(r, this.videoPollMs ?? 3000));
+        file = await (await this.fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}`,
+          { headers: { "x-goog-api-key": key } })).json();
+      }
+      if (file.state !== "ACTIVE") throw new Error(`file ${file.state}`);
+      return [{ file_data: { mime_type: file.mimeType || "video/mp4", file_uri: file.uri } }];
+    } catch (e) {
+      console.log(`Gemini can't watch the video (${e.message}), using its cover picture`);
+      try {
+        return piece.video.thumb ? [await this.downloadPhoto(piece.video.thumb)] : [];
+      } catch (e2) {
+        return [];
+      }
+    }
+  }
+
+  async addVideo(state, msg, video) {
+    // A video is always one post on its own. Any text sent before it (or under it) becomes its note.
+    const chat = msg.chat.id;
+    if ((video.file_size || 0) > MAX_VIDEO_MB * 1024 * 1024) {
+      return this.send(chat, `⚠️ الفيديو ده كبير (${Math.round(video.file_size / 1048576)} ميجا). ` +
+        `ابعت فيديو أقل من ${MAX_VIDEO_MB} ميجا (أقصر، أو ابعته كفيديو عادي مش ملف).`);
+    }
+    let note = "";
+    if (state.open && !state.open.photos.length) {
+      note = state.open.note;
+      state.open = null;
+    }
+    if (msg.caption) note = note ? `${note} – ${msg.caption.trim()}` : msg.caption.trim();
+    const piece = {
+      id: state.next_id++, photos: [], files: [], note: note.slice(0, 300), caption: null, from: msg.from.id,
+      video: { id: video.file_id, mime: video.mime_type || "video/mp4", thumb: video.thumbnail?.file_id || null,
+        size: video.file_size || 0 },
+      video_final: null, video_status: "waiting", video_sent: this.now().ms,
+    };
+    state.pieces.push(piece);
+    state.to_caption = [...(state.to_caption || []), { id: piece.id, chat }];
+    await this.save();
+    await this.storage.setAlarm(this.now().ms);
+    const logo = await this.startVideoLogo(piece, chat);
+    await this.save();
+    return this.send(chat, logo
+      ? "🎬 استلمت الفيديو! بحط اللوجو عليه (دقيقة أو اتنين) وبكتب الكلام…"
+      : "🎬 استلمت الفيديو! بكتب الكلام… (اللوجو مش متفعل، هيتنشر زي ما هو)");
+  }
+
+  async startVideoLogo(piece, chat) {
+    // Asks GitHub to run video-logo.yml, which puts the logo on the video and reports back to /video-ready.
+    if (!this.env.GITHUB_TOKEN) {
+      piece.video_status = "no_logo";
+      return false;
+    }
+    try {
+      const res = await this.fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/video-logo.yml/dispatches`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json",
+          "User-Agent": "pieces-poster", "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "main", inputs: { piece: String(piece.id), file_id: piece.video.id, chat: String(chat) } }),
+      });
+      if (!res.ok) throw new Error(`GitHub ${res.status} ${(await res.text()).slice(0, 200)}`);
+      piece.video_status = "processing";
+      return true;
+    } catch (e) {
+      console.log(`Could not start the video logo job: ${e.message}`);
+      piece.video_status = "no_logo";
+      return false;
+    }
+  }
+
+  async videoReady({ piece: id, file_id: fileId, error }) {
+    // Called by the GitHub job when the video with the logo is ready (it already sent it to the chat).
+    const state = await this.load();
+    const piece = state.pieces.find((p) => p.id === Number(id));
+    if (!piece?.video) return "no such post";
+    if (fileId && !error) {
+      piece.video_final = fileId;
+      piece.video_status = "done";
+    } else {
+      piece.video_status = "no_logo";
+      await this.send(piece.from, `⚠️ ماقدرتش أحط اللوجو على فيديو بوست رقم ${piece.id}، هيتنشر من غير لوجو.`);
+    }
+    await this.save();
+    return "ok";
   }
 
   async addPhoto(state, msg, fileId, asFile) {
@@ -1108,6 +1224,18 @@ export class BotCore {
     return res.json();
   }
 
+  async postVideoToFacebook(piece, caption) {
+    const bytes = await this.downloadPhoto(piece.video_final || piece.video.id);
+    const form = new FormData();
+    form.append("description", caption);
+    form.append("access_token", await this.pageToken());
+    form.append("source", new Blob([bytes], { type: "video/mp4" }), "piece.mp4");
+    const res = await this.fetch(`https://graph-video.facebook.com/${FB_API_VERSION}/${this.env.FB_PAGE_ID}/videos`,
+      { method: "POST", body: form });
+    if (!res.ok) throw new Error(`Facebook refused the video: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    return (await res.json()).id;
+  }
+
   async postToFacebook(images, caption) {
     // One photo -> photo post. Several photos -> one post with all of them. Returns the post id.
     if (images.length === 1) {
@@ -1155,6 +1283,9 @@ export class BotCore {
         "📸 ابعت صور القطع هنا.");
     }
     const piece = state.pieces[0];
+    if (piece.video_status === "processing" && now.ms - (piece.video_sent || 0) < VIDEO_WAIT_HOURS * 3600 * 1000) {
+      return;                                        // the logo is still being added: try again in 5 minutes
+    }
     try {
       await this.publish(state, piece, () => state.posted_hours.push(slot));
     } catch (e) {
@@ -1173,7 +1304,9 @@ export class BotCore {
     const testMode = !this.env.FB_PAGE_TOKEN;
     let postId = null;
     let photos = null;
-    if (!testMode) {
+    if (!testMode && piece.video) {
+      postId = await this.postVideoToFacebook(piece, fullCaption(piece));
+    } else if (!testMode) {
       photos = await this.postPhotos(piece);
       postId = await this.postToFacebook(photos, fullCaption(piece));
     }
@@ -1190,7 +1323,7 @@ export class BotCore {
     }
     console.log(`Posted piece ${piece.id}: ${postId}`);
     let storyNote = "";
-    if (STORIES_ON) try {
+    if (STORIES_ON && photos) try {
       const n = await this.postStories(photos);
       storyNote = `\n📲 واتنشر كمان في الستوري (${n}).`;
     } catch (e) {

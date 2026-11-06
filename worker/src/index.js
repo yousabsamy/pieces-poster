@@ -24,6 +24,10 @@ export class Bot extends DurableObject {
     return this.core.tick();
   }
 
+  videoReady(info) {
+    return this.core.videoReady(info);
+  }
+
   alarm() {
     return this.core.backgroundWork();   // captions for finished pieces and "post now", in the background
   }
@@ -50,6 +54,13 @@ export default {
         console.log(`Update failed: ${e.message}`);
       }
       return new Response("ok");
+    }
+
+    // The GitHub job (video-logo.yml) reports here when the video with the logo is ready.
+    if (request.method === "POST" && url.pathname === "/video-ready") {
+      const info = await request.json().catch(() => ({}));
+      if (!env.VIDEO_SECRET || info.secret !== env.VIDEO_SECRET) return new Response("Forbidden", { status: 403 });
+      return new Response(await bot(env).videoReady(info));
     }
 
     // Opening /setup once tells Telegram to send messages to this Worker.
