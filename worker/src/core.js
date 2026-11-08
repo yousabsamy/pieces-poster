@@ -308,6 +308,10 @@ export function cleanCaption(text) {
   return result;
 }
 
+function mediaText(piece) {
+  return piece.video ? "فيديو" : `${piece.photos.length} صورة`;
+}
+
 function addNote(open, text) {
   const t = text.trim();
   if (t && !open.note.includes(t)) open.note = (open.note ? `${open.note} – ${t}` : t).slice(0, 300);
@@ -886,7 +890,7 @@ export class BotCore {
     const slots = upcomingSlots(state, now, Math.max(state.pieces.length + 2, 4));
     const times = pieceSchedule(state, now);
     const posts = state.pieces.map((p, i) =>
-      `${i + 1}. بوست ${p.id} – ${p.photos.length} صورة – ${times[p.id]} – ${(p.caption || "").split("\n")[0].slice(0, 60)}` +
+      `${i + 1}. بوست ${p.id} – ${mediaText(p)} – ${times[p.id]} – ${(p.caption || "").split("\n")[0].slice(0, 60)}` +
       ` – ${p.note || ""}`).join("\n") || "(none)";
     const open = state.open ? `${state.open.photos.length} photo(s) so far` +
       (state.open.count ? ` of ${state.open.count}` : "") + (state.open.note ? `, note: ${state.open.note}` : "") : "none";
@@ -1043,7 +1047,7 @@ export class BotCore {
         continue;
       }
       const text = `${this.cheer(piece.from)}\n\n` +
-        `✅ بوست رقم ${piece.id} جاهز (${piece.photos.length} صورة)\n` +
+        `✅ بوست رقم ${piece.id} جاهز (${mediaText(piece)})\n` +
         `🗓 هيتنشر ${pieceSchedule(state, this.now())[piece.id]}\n\n` +
         `📝 الكلام اللي هيتكتب:\n${piece.caption}\n\n` +
         "💬 لو عايز تغير حاجة اكتبها عادي، زي: خليه أقصر";
@@ -1123,7 +1127,7 @@ export class BotCore {
       const lines = [`🗂 البوستات اللي مستنية (${state.pieces.length}):`];
       for (const p of state.pieces) {
         const first = (p.caption || p.note || "").split("\n")[0].slice(0, 50);
-        lines.push(`\nرقم ${p.id} – ${p.photos.length} صورة – ${times[p.id]}\n${first}`);
+        lines.push(`\nرقم ${p.id} – ${mediaText(p)} – ${times[p.id]}\n${first}`);
       }
       // One button per post: it shows the post and what you can do with it.
       const rows = state.pieces.slice(0, 50).map((p) => [{ text: `👀 بوست ${p.id} – ${times[p.id]}`, callback_data: `preview:${p.id}` }]);
