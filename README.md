@@ -26,7 +26,8 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 
 - The worker can send a video (under 20 MB). It is always one post on its own; text sent before or under it is its note.
 - Gemini watches the video (Gemini file upload) and writes the caption; if that fails it uses the video cover picture.
-- The logo is added by the GitHub Action `.github/workflows/video-logo.yml` (ffmpeg, same size and place as photos).
+- The GitHub Action `.github/workflows/video-logo.yml` (runs `.github/scripts/video_logo.py` with ffmpeg) puts the video in a
+  4:5 frame with a blurred fill and the logo in its calmest corner (never bottom-right: Facebook's sound button is there).
   The Worker starts it with `GITHUB_TOKEN`; it sends the finished video to the chat and reports to `/video-ready`
   with `VIDEO_SECRET`. GitHub secrets needed: `TELEGRAM_BOT_TOKEN`, `VIDEO_SECRET`.
 - At posting time it waits up to 2 hours for the logo version, then posts as it is. Posted as a Facebook video.
@@ -42,8 +43,9 @@ The code is in `worker/src/core.js`. The settings are at the top of that file.
 
 ## Logo and contact info
 
-- Every photo gets the shop logo in the bottom-right corner (`assets/logo.png`, size and place at the top of
-  `core.js`). Cloudflare Images draws it, free up to 5,000 photos a month. If it ever fails, the photo goes out without it.
+- Every photo is put in a 4:5 frame (the shape Facebook shows in full), with a soft blurred fill, so nothing is cut.
+- The logo (`assets/logo.png`) goes in the calmest corner, so it never covers the piece (bottom-right unless another
+  corner is clearly emptier). With several photos in one post it sits further in, because Facebook cuts the sides. Cloudflare Images draws it, free up to 5,000 photos a month. If it ever fails, the photo goes out without it.
 - Every caption ends with the address and both WhatsApp numbers (`CONTACT` in `core.js`).
 - `/preview` and the 🧪 test posts show the photos with the logo, exactly as they'll be posted.
 

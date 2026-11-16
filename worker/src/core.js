@@ -68,9 +68,14 @@ export const CONTACT =
   "📍 أول شارع البنك الزراعي – بجوار صيدلية عزمي – القناطر الخيرية\n" +
   "📞 واتساب: 01012087660 – 01092091391";
 
-// The logo goes in the bottom-right corner of every photo (the owner chose "Option 1").
+// The logo (owner chose "Option 1": small, in a corner) goes in the calmest corner of every photo, so it doesn't
+// cover the piece. Every photo is put in a 4:5 frame first, because Facebook shows 4:5 in full.
 const LOGO_WIDTH = 0.16;       // logo width, as a part of the photo's width
 const LOGO_MARGIN = 0.03;      // space from the edges, as a part of the photo's width
+const LOGO_MARGIN_MULTI = 0.17; // posts with several photos: Facebook cuts the sides, so keep the logo further in
+const FRAME_RATIO = 4 / 5;     // width / height
+const MAX_SIDE = 2048;         // Facebook's biggest size
+const CHECK_W = 40, CHECK_H = 50;   // tiny copy used to find the calmest corner
 const LOGO_OPACITY = 0.95;
 const STORIES_ON = false;        // owner wants Stories later: set to true to turn them on
 const MAX_STORIES_PER_POST = 3;
@@ -333,6 +338,76 @@ function newState() {
   return { day: null, posted_hours: [], failed_slot: null, last_alert: 0, next_id: 1, pieces: [], open: null };
 }
 
+export function frameSize(width, height) {
+  // The 4:5 frame that fits the whole photo, at most MAX_SIDE tall.
+  let W = width, H = height;
+  if (W / H < FRAME_RATIO) W = Math.round(H * FRAME_RATIO); else H = Math.round(W / FRAME_RATIO);
+  const k = Math.min(1, MAX_SIDE / H);
+  return [Math.round(W * k), Math.round(H * k)];
+}
+
+export function pickCorner(gray, w, h, { multi = false, avoid = [] } = {}) {
+  // How much detail (edges) each corner has where the logo would go; the calmest one wins.
+  // Bottom-right is the usual place, so it wins unless another corner is clearly (15%) calmer.
+  const bw = Math.max(2, Math.round(w * (LOGO_WIDTH + 0.06)));
+  const bh = Math.max(2, Math.round(h * (LOGO_WIDTH + 0.06) * w / h));
+  const side = Math.round(w * (multi ? LOGO_MARGIN_MULTI - 0.03 : 0));
+  const score = (x0, y0) => {
+    let sum = 0, n = 0;
+    for (let y = y0; y < y0 + bh - 1; y++) for (let x = x0; x < x0 + bw - 1; x++) {
+      const i = y * w + x;
+      sum += Math.abs(gray[i] - gray[i + 1]) + Math.abs(gray[i] - gray[i + w]); n++;
+    }
+    return n ? sum / n : 0;
+  };
+  const spots = {
+    "bottom-right": score(w - side - bw, h - bh), "bottom-left": score(side, h - bh),
+    "top-right": score(w - side - bw, 0), "top-left": score(side, 0),
+  };
+  for (const a of avoid) delete spots[a];
+  const [usual, ...others] = Object.keys(spots);
+  const calmest = others.reduce((a, c) => (a === null || spots[c] < spots[a] ? c : a), null);
+  return calmest !== null && spots[calmest] < spots[usual] * 0.85 ? calmest : usual;
+}
+
+export async function decodePng(png) {
+  // A small PNG reader (8-bit, not interlaced) that gives back the picture in gray, one byte per pixel.
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let pos = 8, w = 0, h = 0, type = 0, depth = 8;
+  const idat = [];
+  while (pos < png.length) {
+    const len = view.getUint32(pos); const kind = String.fromCharCode(...png.subarray(pos + 4, pos + 8));
+    const data = png.subarray(pos + 8, pos + 8 + len);
+    if (kind === "IHDR") { w = view.getUint32(pos + 8); h = view.getUint32(pos + 12); depth = png[pos + 16]; type = png[pos + 17]; }
+    if (kind === "IDAT") idat.push(data);
+    if (kind === "IEND") break;
+    pos += 12 + len;
+  }
+  if (depth !== 8) throw new Error(`PNG depth ${depth}`);
+  const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[type];
+  if (!channels) throw new Error(`PNG type ${type}`);
+  const raw = new Uint8Array(await new Response(new Blob(idat).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+  const stride = w * channels, out = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? out[y * stride + x - channels] : 0;
+      const b = y ? out[(y - 1) * stride + x] : 0;
+      const c = x >= channels && y ? out[(y - 1) * stride + x - channels] : 0;
+      let v = line[x];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      out[y * stride + x] = v & 255;
+    }
+  }
+  const gray = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const p = i * channels;
+    gray[i] = channels >= 3 ? (out[p] * 77 + out[p + 1] * 150 + out[p + 2] * 29) >> 8 : out[p];
+  }
+  return { gray, w, h };
+}
+
 export class BotCore {
   // storage: { get(key), put(key, value), setAlarm(ms) }. fetch and now() are passed in so tests can fake them.
   constructor(storage, env, fetchFn = (...args) => fetch(...args), nowFn = Date.now, logo = null) {
@@ -407,21 +482,56 @@ export class BotCore {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  async addLogo(bytes) {
-    // Draws the logo in the bottom-right corner with Cloudflare Images. If anything fails, the photo goes out as it is.
+  async addLogo(bytes, { multi = false } = {}) {
+    // Puts the photo in a 4:5 frame (the shape Facebook shows in full) filled with a soft blurred copy of itself,
+    // then draws the logo in the calmest corner, so it never covers the piece. With several photos in one post
+    // Facebook cuts the sides, so the logo is kept further in. If anything fails, the photo goes out as it is.
     const images = this.env.IMAGES;
     if (!images || !this.logo) return bytes;
     try {
-      const { width } = await images.info(new Response(bytes).body);
-      const logo = images.input(new Response(this.logo).body).transform({ width: Math.round(width * LOGO_WIDTH) });
-      const margin = Math.round(width * LOGO_MARGIN);
-      const result = await images.input(new Response(bytes).body)
-        .draw(logo, { bottom: margin, right: margin, opacity: LOGO_OPACITY })
+      const { width, height } = await images.info(new Response(bytes).body);
+      let [W, H] = frameSize(width, height);
+      let frame = bytes;
+      if (Math.abs(width / height - FRAME_RATIO) > 0.01) {
+        const photo = images.input(new Response(bytes).body).transform({ width: W, height: H, fit: "contain" });
+        const framed = await images.input(new Response(bytes).body)
+          .transform({ width: W, height: H, fit: "cover", blur: 50, brightness: 0.85 })
+          .draw(photo)
+          .output({ format: "image/jpeg", quality: 95 });
+        frame = new Uint8Array(await framed.response().arrayBuffer());
+      } else {
+        [W, H] = [width, height];
+      }
+      const corner = await this.calmCorner(frame, multi);
+      const logoW = Math.round(W * LOGO_WIDTH);
+      const logo = images.input(new Response(this.logo).body).transform({ width: logoW });
+      const side = Math.round(W * (multi ? LOGO_MARGIN_MULTI : LOGO_MARGIN));
+      const edge = Math.round(W * LOGO_MARGIN);
+      const place = { opacity: LOGO_OPACITY };
+      place[corner.startsWith("bottom") ? "bottom" : "top"] = edge;
+      place[corner.endsWith("right") ? "right" : "left"] = side;
+      const result = await images.input(new Response(frame).body)
+        .draw(logo, place)
         .output({ format: "image/jpeg", quality: 92 });
       return new Uint8Array(await result.response().arrayBuffer());
     } catch (e) {
       console.log(`Could not add the logo: ${e.message}`);
       return bytes;
+    }
+  }
+
+  async calmCorner(frame, multi) {
+    // Looks at a tiny copy of the photo and picks the corner with the least detail. Bottom-right wins unless
+    // another corner is clearly calmer. Any problem: bottom-right.
+    try {
+      const small = await this.env.IMAGES.input(new Response(frame).body)
+        .transform({ width: CHECK_W, height: CHECK_H, fit: "contain" })
+        .output({ format: "image/png" });
+      const { gray, w, h } = await decodePng(new Uint8Array(await small.response().arrayBuffer()));
+      return pickCorner(gray, w, h, { multi });
+    } catch (e) {
+      console.log(`Could not check the corners: ${e.message}`);
+      return "bottom-right";
     }
   }
 
@@ -454,9 +564,10 @@ export class BotCore {
   }
 
   async postPhotos(piece) {
-    // The photos exactly as they go to Facebook: downloaded from Telegram, with the logo.
+    // The photos exactly as they go to Facebook: downloaded from Telegram, in the 4:5 frame, with the logo.
     const images = await Promise.all(piece.photos.map((f) => this.downloadPhoto(f)));
-    return Promise.all(images.map((b) => this.addLogo(b)));
+    const multi = images.length > 1;
+    return Promise.all(images.map((b) => this.addLogo(b, { multi })));
   }
 
   async sendPreview(chat, piece, header) {

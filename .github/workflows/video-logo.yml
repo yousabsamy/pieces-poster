@@ -1,8 +1,7 @@
 name: Put the logo on a video
 
 # Started by the pieces bot (Cloudflare Worker) when the worker sends a video on Telegram.
-# It downloads the video from Telegram, puts the shop logo in the bottom-right corner (same place and size as
-# on the photos), sends the finished video back to the chat, and tells the bot its new Telegram file id.
+# It downloads the video from Telegram, puts it in a 4:5 frame with the shop logo in its calmest corner, sends the finished video back to the chat, and tells the bot its new Telegram file id.
 on:
   workflow_dispatch:
     inputs:
@@ -43,16 +42,8 @@ jobs:
           ls -la in.video
 
       - name: Put the logo on it
-        run: |
-          # Logo width = 16% of the video width, 3% from the right and bottom edges. Smaller file if over 19 MB.
-          for crf in 23 27 31; do
-            ffmpeg -hide_banner -loglevel error -y -i in.video -i worker/assets/logo.png -filter_complex \
-              "[1:v][0:v]scale2ref=w='iw*0.16':h='ow/mdar'[logo][base];[base][logo]overlay=x='W-w-W*0.03':y='H-h-W*0.03',format=yuv420p" \
-              -c:v libx264 -preset veryfast -crf $crf -c:a aac -b:a 128k -movflags +faststart out.mp4
-            size=$(stat -c %s out.mp4)
-            echo "crf $crf -> $size bytes"
-            [ "$size" -lt 19000000 ] && break
-          done
+        # 4:5 frame with a blurred fill, logo in the calmest corner (never bottom-right: Facebook's sound button).
+        run: python3 .github/scripts/video_logo.py in.video worker/assets/logo.png out.mp4
 
       - name: Send it back and tell the bot
         run: |

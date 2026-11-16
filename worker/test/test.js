@@ -2,7 +2,8 @@
 // Run: npm test
 
 import assert from "node:assert/strict";
-import { BotCore, CONTACT, cairoTime, cleanCaption } from "../src/core.js";
+import { BotCore, CONTACT, cairoTime, cleanCaption, frameSize, pickCorner, decodePng } from "../src/core.js";
+import { deflateSync } from "node:zlib";
 // Stories are off for now, so the story checks are skipped (they passed when Stories were on).
 
 const WORKER = 111, STRANGER = 999;
@@ -305,6 +306,24 @@ assert.deepEqual(drawn, { bottom: 60, right: 60, opacity: 0.95, logoWidth: 320 }
 env.IMAGES = { info: async () => { throw new Error("down"); } };
 assert.deepEqual(await logoBot.addLogo(JPEG), JPEG);
 delete env.IMAGES;
+
+
+// 9f. Every photo goes in a 4:5 frame; the logo goes to the calmest corner (bottom-right unless clearly busier).
+assert.deepEqual(frameSize(960, 1280), [1024, 1280]);       // tall photo: wider frame
+assert.deepEqual(frameSize(1034, 615), [1034, 1293]);       // wide photo: taller frame
+assert.deepEqual(frameSize(4000, 3000), [1638, 2048]);      // never bigger than 2048
+const W40 = 40, H50 = 50, busy = (x0, y0) => { const g = new Uint8Array(W40 * H50).fill(100);
+  for (let y = y0; y < y0 + 15; y++) for (let x = x0; x < x0 + 12; x++) g[y * W40 + x] = (x + y) % 2 ? 255 : 0; return g; };
+assert.equal(pickCorner(new Uint8Array(W40 * H50).fill(100), W40, H50), "bottom-right");   // all calm: usual place
+assert.equal(pickCorner(busy(28, 35), W40, H50), "bottom-left");                           // piece in bottom-right
+assert.equal(pickCorner(busy(28, 35), W40, H50, { avoid: ["bottom-right"] }), "bottom-left");
+// A tiny real PNG (2x2 RGB, filter 0) is read back in gray.
+const chunk = (type, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt32BE(data.length, 0); b.write(type, 4, "ascii"); data.copy(b, 8); return b; };
+const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(2, 0); ihdr.writeUInt32BE(2, 4); ihdr[8] = 8; ihdr[9] = 2;
+const rows = Buffer.from([0, 255, 255, 255, 0, 0, 0, 2, 0, 0, 0, 255, 255, 255]);     // second row uses the "up" filter
+const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
+const decoded = await decodePng(new Uint8Array(png));
+assert.deepEqual([decoded.w, decoded.h, ...decoded.gray], [2, 2, 255, 0, 255, 255]);
 
 // 10. AI captions are cleaned of links, phones and hashtags.
 assert.equal(cleanCaption("✨ حلق شيك 💛\nكلمنا 01012087660\nhttps://x.com #دهب"), "✨ حلق شيك 💛");
