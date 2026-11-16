@@ -92,6 +92,17 @@ const CHEERS = [
   "💛 الله ينور يا {name}! 😍 تسلم إيدك",
 ];
 
+// The page's piece captions that got the MOST reactions (checked on the page 2026-11-16: 20–43 reactions, while
+// longer, heavier captions got 5–10). They are short, simple and punchy. Gemini copies this tone first.
+const BEST_REACH_EXAMPLES = [
+  "وزن خفيف وشكل خرافه\nيملي العين\n…بتبدأ من 5 جرام بس!",
+  "غوايش ذهب.. أناقة تُلبس وتِبان\nتفاصيل فخمة ولمعة تخطف العين\nاختاري شياكتك من مجوهرات السلام",
+  "بريق هادي… وأناقة بتتكلم عن نفسها\nخاتم يكمّل إطلالتك بلمسة من الفخامة والرقي.\nمجوهرات السلام — جمال يليق بذوقك.",
+  "خاتم يليق بذوقك… ولمعة تليق بجمالك\nالذهب مش بس زينة… ده إحساس بالفخامة\nلمسة ذهبية تكمل أناقتك",
+  "لأن الاسم له حكاية… خليه يتكتب دهب\nسلسلة باسمك بتتصمم مخصوص ليكي",
+  "الشياكة مش بالوزن.. الشياكة في التفاصيل\nغوايش دهب بلمعة تخطف العين",
+];
+
 // Used only when Gemini is not available.
 const READY_CAPTIONS = [
   "✨ قطعة من الذهب… تحكي عن ذوقك 💛\nتفاصيل فخمة ولمعة تخطف القلب 😍\nمجوهرات السلام — لأن الشياكة لها عنوان.",
@@ -106,13 +117,16 @@ const GEMINI_PROMPT =
   "First, look closely and decide exactly what the piece is, in Egyptian words: حلق، خاتم، دبلة، دبل، " +
   "غويشة / غوايش، انسيال، إسورة، سلسلة، سلسلة باسم، كوليه، تعليقة، طقم، خلخال، سبيكة، جنيه ذهب. " +
   "If there are several pieces, say so (for example خواتم or طقم).\n\n" +
-  "Then write ONE caption in Egyptian Arabic in exactly the same style as these real captions from the page:\n\n" +
+  "Then write ONE caption in Egyptian Arabic. These captions got the MOST reactions on the page, so copy their " +
+  "tone most of all: short, simple, warm, punchy, like a person talking:\n\n" +
+  BEST_REACH_EXAMPLES.map((c, i) => `[${i + 1}]\n${c}`).join("\n\n") + "\n\n" +
+  "More real captions from the page (good for words and ideas, but they are longer than they should be):\n\n" +
   STYLE_EXAMPLES.map((c, i) => `[${i + 1}]\n${c}`).join("\n\n") + "\n\n" +
   "Rules:\n" +
-  "- 2 to 4 short lines. Line 1 is a catchy hook. Then name the piece and describe what you really see " +
-  "(its shape, design, details, shine). The last line is a sign-off with \"مجوهرات السلام\" and a short " +
-  "classy phrase, like the examples (use a new phrase, not always the same one).\n" +
-  "- Add 2 to 4 emojis in total, like ✨💛👑😍💍, at the start or end of lines.\n" +
+  "- 2 or 3 SHORT lines (each under about 8 words). Line 1 is a catchy hook in everyday Egyptian words. Then name " +
+  "the piece with one detail you really see. The last line mentions \"مجوهرات السلام\" in a short classy way " +
+  "(use a new phrase, not always the same one). No long descriptions, no heavy formal words.\n" +
+  "- Add 1 to 3 emojis in total, like ✨💛👑😍💍, at the start or end of lines.\n" +
   "- Never write a price, weight or karat unless it is in the worker's note. Do not add hashtags, phone numbers, " +
   "addresses, links or offers.\n" +
   "- Write something new. Don't copy an example, and don't repeat these recent captions:\n{recent}\n" +
