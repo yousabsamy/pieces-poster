@@ -116,7 +116,8 @@ const GEMINI_PROMPT =
   "El Khayreya, Egypt. The photo(s) show ONE gold piece the shop is selling.\n\n" +
   "First, look closely and decide exactly what the piece is, in Egyptian words: حلق، خاتم، دبلة، دبل، " +
   "غويشة / غوايش، انسيال، إسورة، سلسلة، سلسلة باسم، كوليه، تعليقة، طقم، خلخال، سبيكة، جنيه ذهب. " +
-  "If there are several pieces, say so (for example خواتم or طقم).\n\n" +
+  "If there are several pieces, say so (for example خواتم or طقم or سلاسل) and still write ONE caption for " +
+  "all of them together, never one caption per piece.\n\n" +
   "Then write ONE caption in Egyptian Arabic. These captions got the MOST reactions on the page, so copy their " +
   "tone most of all: short, simple, warm, punchy, like a person talking:\n\n" +
   BEST_REACH_EXAMPLES.map((c, i) => `[${i + 1}]\n${c}`).join("\n\n") + "\n\n" +
@@ -131,7 +132,7 @@ const GEMINI_PROMPT =
   "addresses, links or offers.\n" +
   "- Write something new. Don't copy an example, and don't repeat these recent captions:\n{recent}\n" +
   "{note}" +
-  "Reply with the caption only, nothing else.";
+  "Reply with ONE caption only (no [1]/[2] numbers, no options), nothing else.";
 
 // What Gemini is told when someone writes to the bot in their own words.
 const ASSISTANT_PROMPT = `You are the assistant inside the Telegram bot of ${"مجوهرات السلام"}, a gold jewelry shop in Egypt.
@@ -316,6 +317,10 @@ function imageType(bytes) {
 
 export function cleanCaption(text) {
   // Keep only plain caption lines: no links, hashtags or phone numbers from the AI.
+  // If Gemini wrote several numbered captions ("[1] … [2] …"), keep only the first one.
+  if (/^[ \t]*\[\d+\]/m.test(text)) {
+    text = text.split(/^[ \t]*\[\d+\][ \t]*/m).map((b) => b.trim()).filter(Boolean)[0] || "";
+  }
   const lines = text.trim().replace(/^[`"'«»]+|[`"'«»]+$/g, "").trim().split("\n")
     .map((line) => {
       const cleaned = line.replace(/https?:\/\/\S+|www\.\S+|#\S+/g, "").trim();

@@ -328,5 +328,8 @@ assert.deepEqual([decoded.w, decoded.h, ...decoded.gray], [2, 2, 255, 0, 255, 25
 // 10. AI captions are cleaned of links, phones and hashtags.
 assert.equal(cleanCaption("✨ حلق شيك 💛\nكلمنا 01012087660\nhttps://x.com #دهب"), "✨ حلق شيك 💛");
 assert.equal(cleanCaption("hello"), null);
+// Gemini sometimes copies the [1] [2] numbering of the examples and writes one caption per piece: keep the first.
+assert.equal(cleanCaption("[1]\nشكل فخم ✨\nكوليه ذهب 💛\n\n[2]\nأناقة ✨\nسلسلة ذهب\n\n[3]\nلمسة ملكية"), "شكل فخم ✨\nكوليه ذهب 💛");
+assert.equal(cleanCaption("[1] شكل فخم يملي العين ✨\n[2] سلسلة ذهب"), "شكل فخم يملي العين ✨");
 
 console.log("All tests passed ✅");
